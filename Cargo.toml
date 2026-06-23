@@ -1,0 +1,48 @@
+[package]
+name = "trading-backend"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+
+[[bin]]
+name = "trading-backend"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.7", features = ["macros", "multipart"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors", "limit"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "macros", "migrate", "rust_decimal"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream", "multipart"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+url = "2"
+async-trait = "0.1"
+futures = "0.3"
+tokio-stream = "0.1"
+
+dotenvy = "0.15"
+
+thiserror = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+bytes = "1"
+sha2 = "0.10"
+hex = "0.4"
+regex = "1"
+once_cell = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
