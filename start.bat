@@ -1,10 +1,23 @@
 @echo off
 REM ============================================
 REM  Trading App - Quick Start (no recompiling!)
-REM  Just double-click this file or run: start.bat
+REM  Runs the pre-built binary directly.
+REM  Run build.bat first if you haven't built yet.
 REM ============================================
 
-cd /d "C:\Users\san\trading-backend"
+cd /d "%~dp0"
+
+if not exist "target\debug\trading-backend.exe" (
+    echo Binary not found. Run build.bat first.
+    pause
+    exit /b 1
+)
+
+if not exist "frontend\dist\index.html" (
+    echo Frontend not built. Run build.bat first.
+    pause
+    exit /b 1
+)
 
 echo Starting Trading App...
 echo.

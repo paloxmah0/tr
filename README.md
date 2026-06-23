@@ -177,6 +177,65 @@ curl -X POST localhost:8080/accounts/<acc>/strategies -H 'content-type: applicat
 - The LLM extraction produces rules that are then run by a deterministic evaluator; always review extracted strategies before enabling live mode.
 - This is research/educational software. Trading forex and derivatives carries substantial risk.
 
+## Build & Run
+
+### Prerequisites
+- [Rust](https://rustup.rs/) (1.75+)
+- [Node.js](https://nodejs.org/) (18+)
+- [PostgreSQL](https://www.postgresql.org/) (optional — server starts without it in degraded mode)
+
+### Quick build (one command)
+
+**Windows:**
+```bat
+build.bat
+```
+
+**Linux/macOS:**
+```bash
+chmod +x build.sh && ./build.sh
+```
+
+This builds the frontend (`npm install` + `npm run build`) and the backend (`cargo build`).
+
+### Run (no recompiling)
+
+**Windows:**
+```bat
+start.bat
+```
+
+**Linux/macOS:**
+```bash
+./start.sh
+```
+
+Then open **http://localhost:8080** in your browser.
+
+> **Important:** Use `start.bat` / `start.sh` to run the server. Do NOT use `cargo run` — it recompiles everything from scratch each time (slow). The binary is already built by `build.bat`.
+
+### Manual build (if you prefer)
+```bash
+# Build frontend
+cd frontend && npm install && npm run build && cd ..
+
+# Build backend
+cargo build
+
+# Run
+./target/debug/trading-backend   # Windows: target\debug\trading-backend.exe
+```
+
+### For development (hot-reload frontend)
+```bash
+# Terminal 1: backend
+cargo run
+
+# Terminal 2: frontend dev server (proxies /api to :8080)
+cd frontend && npm run dev
+# Open http://localhost:5173
+```
+
 ## Roadmap / extension points
 - Per-strategy exit-rule DSL (currently SL/TP only)
 - WebSocket streaming of candles/signals
