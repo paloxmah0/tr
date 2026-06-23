@@ -5,8 +5,8 @@
 //! orders with `stopLossOnFill` / `takeProfitOnFill`). Used for the forex asset
 //! class when `OANDA_PROVIDER_API_TOKEN` is configured.
 
-use crate::config::ProviderSettings;
 use crate::domain::{AssetClass, Candle, Side};
+use crate::dynamic_config::{SharedConfig, keys};
 use crate::error::{AppError, AppResult};
 use crate::market::{Broker, BrokerOrder, MarketProvider, OrderRequest, Quote};
 use async_trait::async_trait;
@@ -16,33 +16,48 @@ use std::sync::Arc;
 
 pub struct OandaClient {
     client: reqwest::Client,
-    base_url: String,
-    token: String,
-    account_id: String,
+    config: SharedConfig,
     granularity: String,
 }
 
 impl OandaClient {
-    pub fn new(settings: &ProviderSettings, granularity_secs: u32) -> Arc<Self> {
+    pub fn new(config: SharedConfig, granularity_secs: u32) -> Arc<Self> {
         Arc::new(Self {
             client: reqwest::Client::new(),
-            base_url: settings.base_url.trim_end_matches('/').to_string(),
-            token: settings.api_key.clone(),
-            account_id: settings.account_id.clone(),
+            config,
             granularity: granularity_to_oanda(granularity_secs),
         })
     }
 
-    fn auth(&self) -> reqwest::header::HeaderValue {
-        reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.token))
+    async fn base_url(&self) -> String {
+        self.config.read().await
+            .get(keys::OANDA_BASE_URL)
+            .cloned()
+            .unwrap_or_else(|| "https://api-fxpractice.oanda.com".to_string())
+            .trim_end_matches('/')
+            .to_string()
+    }
+
+    async fn token(&self) -> String {
+        self.config.read().await.get(keys::OANDA_API_TOKEN).cloned().unwrap_or_default()
+    }
+
+    async fn account_id(&self) -> String {
+        self.config.read().await.get(keys::OANDA_ACCOUNT_ID).cloned().unwrap_or_default()
+    }
+
+    async fn auth(&self) -> reqwest::header::HeaderValue {
+        let token = self.token().await;
+        reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
             .expect("invalid oanda token chars")
     }
 
     async fn get_json(&self, path: &str, query: &[(&str, &str)]) -> AppResult<serde_json::Value> {
+        let base = self.base_url().await;
         let resp = self
             .client
-            .get(format!("{}{}", self.base_url, path))
-            .header("Authorization", self.auth())
+            .get(format!("{base}{path}"))
+            .header("Authorization", self.auth().await)
             .header("Content-Type", "application/json")
             .query(query)
             .send()
@@ -52,10 +67,11 @@ impl OandaClient {
     }
 
     async fn post_json(&self, path: &str, body: &serde_json::Value) -> AppResult<serde_json::Value> {
+        let base = self.base_url().await;
         let resp = self
             .client
-            .post(format!("{}{}", self.base_url, path))
-            .header("Authorization", self.auth())
+            .post(format!("{base}{path}"))
+            .header("Authorization", self.auth().await)
             .header("Content-Type", "application/json")
             .json(body)
             .send()
@@ -160,7 +176,7 @@ impl MarketProvider for OandaClient {
         let inst = to_oanda_instrument(symbol);
         let body = self
             .get_json(
-                &format!("/v3/accounts/{}/pricing", self.account_id),
+                &format!("/v3/accounts/{}/pricing", self.account_id().await),
                 &[("instruments", &inst)],
             )
             .await?;
@@ -239,7 +255,7 @@ impl Broker for OandaClient {
 
         let body = serde_json::json!({ "order": order });
         let resp = self
-            .post_json(&format!("/v3/accounts/{}/orders", self.account_id), &body)
+            .post_json(&format!("/v3/accounts/{}/orders", self.account_id().await), &body)
             .await?;
         if let Some(err) = resp.get("errorMessage") {
             return Err(AppError::Execution(format!("oanda order: {err}")));
@@ -262,7 +278,7 @@ impl Broker for OandaClient {
 
     async fn balance(&self) -> AppResult<Decimal> {
         let body = self
-            .get_json(&format!("/v3/accounts/{}/summary", self.account_id), &[])
+            .get_json(&format!("/v3/accounts/{}/summary", self.account_id().await), &[])
             .await?;
         body.get("account")
             .and_then(|a| a.get("balance"))

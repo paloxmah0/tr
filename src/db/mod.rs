@@ -3,6 +3,7 @@ use sqlx::PgPool;
 pub mod accounts;
 pub mod analytics;
 pub mod notes;
+pub mod settings;
 pub mod strategies;
 pub mod trades;
 

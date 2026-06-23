@@ -9,6 +9,7 @@ import Notes from "./pages/Notes";
 import Backtest from "./pages/Backtest";
 import SignalsTrades from "./pages/SignalsTrades";
 import Analytics from "./pages/Analytics";
+import Settings from "./pages/Settings";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
@@ -22,6 +23,7 @@ createRoot(document.getElementById("root")!).render(
           <Route path="backtest" element={<Backtest />} />
           <Route path="activity" element={<SignalsTrades />} />
           <Route path="analytics" element={<Analytics />} />
+          <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>
     </BrowserRouter>

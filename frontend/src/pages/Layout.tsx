@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useSearchParams } from "react-router-dom";
-import { LayoutDashboard, FileCode, StickyNote, FlaskConical, Activity, BarChart3 } from "lucide-react";
+import { LayoutDashboard, FileCode, StickyNote, FlaskConical, Activity, BarChart3, Settings as SettingsIcon } from "lucide-react";
 
 const nav = [
   { to: "/", label: "Accounts", icon: LayoutDashboard, end: true },
@@ -8,6 +8,7 @@ const nav = [
   { to: "/backtest", label: "Backtest", icon: FlaskConical },
   { to: "/activity", label: "Activity", icon: Activity },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
+  { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
 export default function Layout() {

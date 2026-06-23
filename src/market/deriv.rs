@@ -26,8 +26,7 @@ type WsSink = futures::stream::SplitSink<WsStream, Message>;
 
 /// Connection state for the Deriv socket.
 pub struct DerivClient {
-    ws_url: String,
-    token: String,
+    config: crate::dynamic_config::SharedConfig,
     /// Write half of the socket, guarded so only one writer at a time.
     sink: Arc<Mutex<Option<WsSink>>>,
     /// Pending request-response channels keyed by req_id.
@@ -36,27 +35,52 @@ pub struct DerivClient {
     /// Serialize (re)connection attempts.
     connect_lock: Mutex<()>,
     authorized: Arc<Mutex<bool>>,
+    /// Token used for the current connection; if it changes, reconnect.
+    current_token: Mutex<String>,
     granularity: u32,
 }
 
 impl DerivClient {
-    pub fn new(app_id: &str, token: &str, granularity: u32) -> Self {
-        let app_id = if app_id.is_empty() { "1089" } else { app_id };
-        let ws_url = format!("wss://ws.derivws.com/websockets/v3?app_id={app_id}");
+    pub fn new(config: crate::dynamic_config::SharedConfig, granularity: u32) -> Self {
         Self {
-            ws_url,
-            token: token.to_string(),
+            config,
             sink: Arc::new(Mutex::new(None)),
             pending: Arc::new(Mutex::new(HashMap::new())),
             req_id: AtomicU64::new(1),
             connect_lock: Mutex::new(()),
             authorized: Arc::new(Mutex::new(false)),
+            current_token: Mutex::new(String::new()),
             granularity,
         }
     }
 
-    /// Ensure a connected + authorized socket exists; reconnect if dropped.
+    async fn ws_url(&self) -> String {
+        let app_id = self.config.read().await
+            .get(crate::dynamic_config::keys::DERIV_APP_ID)
+            .cloned()
+            .unwrap_or_default();
+        let app_id = if app_id.is_empty() { "1089" } else { &app_id };
+        format!("wss://ws.derivws.com/websockets/v3?app_id={app_id}")
+    }
+
+    async fn token(&self) -> String {
+        self.config.read().await
+            .get(crate::dynamic_config::keys::DERIV_API_TOKEN)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Ensure a connected + authorized socket exists; reconnect if dropped
+    /// or if the token has changed since the last connection.
     async fn ensure_connected(&self) -> AppResult<()> {
+        let token = self.token().await;
+
+        // If token changed since last connect, force reconnect.
+        let token_changed = *self.current_token.lock().await != token;
+        if token_changed {
+            self.disconnect().await;
+        }
+
         if self.sink.lock().await.is_some() && *self.authorized.lock().await {
             return Ok(());
         }
@@ -67,14 +91,16 @@ impl DerivClient {
             return Ok(());
         }
 
-        tracing::info!(url = %self.ws_url, "connecting to Deriv WebSocket");
-        let (stream, _resp) = tokio_tungstenite::connect_async(&self.ws_url)
+        let ws_url = self.ws_url().await;
+        tracing::info!(url = %ws_url, "connecting to Deriv WebSocket");
+        let (stream, _resp) = tokio_tungstenite::connect_async(&ws_url)
             .await
             .map_err(|e| AppError::Market(format!("deriv ws connect: {e}")))?;
 
         let (sink, reader) = stream.split();
         *self.sink.lock().await = Some(sink);
         *self.authorized.lock().await = false;
+        *self.current_token.lock().await = token.clone();
 
         // Spawn the reader task that demuxes responses by req_id.
         {
@@ -87,9 +113,9 @@ impl DerivClient {
         }
 
         // Authorize if a token is configured.
-        if !self.token.is_empty() {
+        if !token.is_empty() {
             let auth = self
-                .send_raw(serde_json::json!({ "authorize": self.token }))
+                .send_raw(serde_json::json!({ "authorize": token }))
                 .await?;
             if auth.get("error").is_some() {
                 let msg = auth["error"]["message"].as_str().unwrap_or("authorize failed");

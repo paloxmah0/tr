@@ -4,6 +4,7 @@ mod backtest;
 mod config;
 mod db;
 mod domain;
+mod dynamic_config;
 mod engine;
 mod engine_loop;
 mod error;
@@ -14,12 +15,13 @@ mod llm;
 mod market;
 mod state;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use config::Settings;
-use domain::AssetClass;
+use dynamic_config::{DynamicConfig, keys};
 use llm::LlmClient;
-use market::{Broker, DerivClient, MarketProvider, MarketRegistry, OandaClient, RestProvider};
+use market::{Broker, DerivClient, MarketProvider, MarketRegistry, OandaClient};
 use sqlx::postgres::PgPoolOptions;
 use state::AppState;
 
@@ -37,8 +39,7 @@ async fn main() -> anyhow::Result<()> {
 
     let settings = Arc::new(Settings::load()?);
 
-    // Use a lazy pool so the server starts even if PostgreSQL isn't reachable.
-    // Migrations + DB-dependent endpoints will fail gracefully until a DB is up.
+    // Lazy pool so the server starts even if PostgreSQL isn't reachable yet.
     let pool = PgPoolOptions::new()
         .max_connections(10)
         .connect_lazy(&settings.database.url)?;
@@ -46,42 +47,42 @@ async fn main() -> anyhow::Result<()> {
     let db = Db::new(pool);
     match db.run_migrations().await {
         Ok(()) => tracing::info!("database migrations applied"),
-        Err(e) => tracing::warn!(error = %e, "database unavailable — server starting in degraded mode (DB endpoints will return 500)"),
+        Err(e) => tracing::warn!(error = %e, "database unavailable — server starting in degraded mode"),
     }
 
-    let llm = Arc::new(LlmClient::new(&settings.llm));
+    // Build the dynamic config from env defaults + DB-persisted values.
+    let mut env_defaults = HashMap::new();
+    env_defaults.insert(keys::LLM_BASE_URL.to_string(), settings.llm.base_url.clone());
+    env_defaults.insert(keys::LLM_API_KEY.to_string(), settings.llm.api_key.clone());
+    env_defaults.insert(keys::LLM_MODEL.to_string(), settings.llm.model.clone());
+    env_defaults.insert(keys::DERIV_APP_ID.to_string(), settings.deriv.app_id.clone());
+    env_defaults.insert(keys::DERIV_API_TOKEN.to_string(), settings.deriv.api_key.clone());
+    env_defaults.insert(keys::DERIV_ACCOUNT_ID.to_string(), settings.deriv.account_id.clone());
+    env_defaults.insert(keys::OANDA_BASE_URL.to_string(), settings.oanda.base_url.clone());
+    env_defaults.insert(keys::OANDA_API_TOKEN.to_string(), settings.oanda.api_key.clone());
+    env_defaults.insert(keys::OANDA_ACCOUNT_ID.to_string(), settings.oanda.account_id.clone());
+
+    let config = Arc::new(DynamicConfig::new(db.clone(), env_defaults).await);
+
+    // Clients read credentials from the shared config, so tokens set via the
+    // Settings page take effect immediately.
+    let llm = Arc::new(LlmClient::new(config.shared(), settings.llm.timeout_secs));
     let ingest = Arc::new(Ingestor::new(db.clone(), llm.clone()));
 
-    // Forex: prefer OANDA (spot data + live broker) when a token is configured,
-    // otherwise fall back to the generic REST adapter.
-    let (forex, forex_broker): (Arc<dyn MarketProvider>, Option<Arc<dyn Broker>>) =
-        if settings.oanda.api_key.is_empty() {
-            (Arc::new(RestProvider::new(&settings.forex, AssetClass::Forex)), None)
-        } else {
-            let oanda = OandaClient::new(&settings.oanda, settings.deriv_granularity_secs);
-            let broker: Arc<dyn Broker> = oanda.clone();
-            (oanda, Some(broker))
-        };
+    let deriv_client = Arc::new(DerivClient::new(config.shared(), settings.deriv_granularity_secs));
+    let oanda_client = OandaClient::new(config.shared(), settings.deriv_granularity_secs);
 
-    // Derivative indices (and forex fallback) via the real Deriv WebSocket client.
-    let deriv_client = Arc::new(DerivClient::new(
-        &settings.deriv.app_id,
-        &settings.deriv.api_key,
-        settings.deriv_granularity_secs,
-    ));
     let deriv: Arc<dyn MarketProvider> = deriv_client.clone();
-    let deriv_broker: Option<Arc<dyn Broker>> = if settings.deriv.api_key.is_empty() {
-        tracing::warn!("DERIV_PROVIDER_API_TOKEN not set; deriv live mode will fall back to simulated fills");
-        None
-    } else {
-        Some(deriv_client.clone())
-    };
+    let oanda: Arc<dyn MarketProvider> = oanda_client.clone();
+    let deriv_broker: Arc<dyn Broker> = deriv_client.clone();
+    let oanda_broker: Arc<dyn Broker> = oanda_client.clone();
 
-    let markets = Arc::new(MarketRegistry::new(forex, deriv, forex_broker, deriv_broker));
+    let markets = Arc::new(MarketRegistry::new(oanda, deriv, Some(oanda_broker), Some(deriv_broker)));
 
     let state = AppState {
         settings: settings.clone(),
         db: db.clone(),
+        config: config.clone(),
         llm: llm.clone(),
         ingest: ingest.clone(),
         markets: markets.clone(),

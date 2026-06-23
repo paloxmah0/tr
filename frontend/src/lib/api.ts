@@ -111,4 +111,11 @@ export const api = {
   // backtest
   backtest: (strategyId: string, body: { symbol: string; initial_balance?: number; candles?: number }) =>
     req<BacktestResult>(`/strategies/${strategyId}/backtest`, { method: "POST", body: JSON.stringify(body) }),
+
+  // settings
+  getSettings: () => req<{ values: Record<string, string>; masked: Record<string, string>; is_set: Record<string, boolean> }>(`/settings`),
+  updateSettings: (values: Record<string, string>) =>
+    req<{ updated: string[] }>(`/settings`, { method: "PUT", body: JSON.stringify(values) }),
+  testService: (service: string) =>
+    req<{ ok: boolean; message: string }>(`/settings/test`, { method: "POST", body: JSON.stringify({ service }) }),
 };

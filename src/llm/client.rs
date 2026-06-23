@@ -1,15 +1,14 @@
-use crate::config::LlmSettings;
+use crate::dynamic_config::SharedConfig;
 use crate::error::{AppError, AppResult};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct LlmClient {
     client: Client,
-    base_url: String,
-    api_key: String,
-    model: String,
-    timeout: std::time::Duration,
+    config: SharedConfig,
+    timeout_secs: u64,
 }
 
 #[derive(Serialize)]
@@ -49,19 +48,33 @@ struct ChatRespMessage {
 }
 
 impl LlmClient {
-    pub fn new(settings: &LlmSettings) -> Self {
+    pub fn new(config: SharedConfig, timeout_secs: u64) -> Self {
         Self {
             client: Client::new(),
-            base_url: settings.base_url.trim_end_matches('/').to_string(),
-            api_key: settings.api_key.clone(),
-            model: settings.model.clone(),
-            timeout: settings.timeout(),
+            config,
+            timeout_secs,
         }
     }
 
+    async fn cfg(&self, key: &str) -> String {
+        self.config.read().await.get(key).cloned().unwrap_or_default()
+    }
+
     pub async fn extract_json(&self, system: &str, user: &str) -> AppResult<serde_json::Value> {
+        let base_url = self.cfg(crate::dynamic_config::keys::LLM_BASE_URL).await;
+        let api_key = self.cfg(crate::dynamic_config::keys::LLM_API_KEY).await;
+        let model = self.cfg(crate::dynamic_config::keys::LLM_MODEL).await;
+        let model = if model.is_empty() { "gpt-4o-mini".to_string() } else { model };
+
+        if api_key.is_empty() {
+            return Err(AppError::Llm("no LLM API key set — configure it in Settings".into()));
+        }
+        if base_url.is_empty() {
+            return Err(AppError::Llm("no LLM base URL set — configure it in Settings".into()));
+        }
+
         let req = ChatRequest {
-            model: &self.model,
+            model: &model,
             messages: vec![
                 ChatMessage { role: "system", content: system },
                 ChatMessage { role: "user", content: user },
@@ -70,11 +83,12 @@ impl LlmClient {
             response_format: Some(ResponseFormat { ty: "json_object".into() }),
         };
 
+        let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
         let resp = self
             .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
-            .timeout(self.timeout)
+            .post(&url)
+            .bearer_auth(&api_key)
+            .timeout(Duration::from_secs(self.timeout_secs))
             .json(&req)
             .send()
             .await
