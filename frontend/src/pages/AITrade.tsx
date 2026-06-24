@@ -4,12 +4,11 @@ import type { Prediction, Evidence, Account } from "../lib/api";
 import { fmt, fmtPct } from "../lib/fmt";
 import { Brain, Loader2, TrendingUp, TrendingDown, Minus, Zap, Clock, Globe, Target, Activity, BarChart3, Eye, Layers, Wallet } from "lucide-react";
 
-// TradingView symbol mapping
 const TV_SYMBOLS: Record<string, string> = {
-  "R_100": "DERIV:VOLATILITY100",
-  "R_75": "DERIV:VOLATILITY75",
-  "R_50": "DERIV:VOLATILITY50",
-  "R_25": "DERIV:VOLATILITY25",
+  "R_100": "DERIV:VOLATILITY_100_INDEX",
+  "R_75": "DERIV:VOLATILITY_75_INDEX",
+  "R_50": "DERIV:VOLATILITY_50_INDEX",
+  "R_25": "DERIV:VOLATILITY_25_INDEX",
   "frxEURUSD": "FX:EURUSD",
   "frxGBPUSD": "FX:GBPUSD",
   "frxUSDJPY": "FX:USDJPY",
