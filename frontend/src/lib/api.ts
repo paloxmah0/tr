@@ -129,15 +129,17 @@ export const api = {
 export interface SignalFactor {
   source: string; name: string; direction: string; weight: number; detail: string;
 }
-export interface CandleSummary {
-  direction: string; open: number; high: number; low: number; close: number;
-  body: number; upper_wick: number; lower_wick: number; pattern: string;
+export interface TimeframeAnalysis {
+  label: string; granularity_secs: number; trend: string; trend_strength: number;
+  direction: string; rsi: number; macd: number; ema_trend: string; bb_position: string;
+  stoch_k: number; dominant_pattern: string; bullish_count: number; bearish_count: number;
+  weight: number; summary: string;
 }
 export interface Prediction {
   direction: string; confidence: number; entry_price: number; stop_loss: number;
   take_profit: number; expiry: string; reasoning: string; signals: SignalFactor[];
   timeframe_secs: number; symbol: string;
   analysis_time_utc: string; current_time_utc: string;
-  market_session: string; scientific_basis: string;
-  last_candle: CandleSummary; predicted_candle: CandleSummary;
+  timeframes: TimeframeAnalysis[];
+  cross_tf_alignment: string; market_session: string; scientific_basis: string;
 }

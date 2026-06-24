@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { api } from "../lib/api";
-import type { Prediction, SignalFactor, CandleSummary } from "../lib/api";
+import type { Prediction, SignalFactor } from "../lib/api";
 import { fmt, fmtPct } from "../lib/fmt";
-import { Brain, Loader2, TrendingUp, TrendingDown, Minus, Zap, Activity, BarChart3, Clock, Globe, Target, CandlestickChart } from "lucide-react";
+import { Brain, Loader2, TrendingUp, TrendingDown, Minus, Zap, Activity, BarChart3, Clock, Globe, Layers, Target } from "lucide-react";
 
 const MARKETS = [
   { symbol: "R_100", label: "Volatility 100 Index", class: "derivindex" },
@@ -65,7 +65,7 @@ export default function AITrade() {
     <div>
       <div className="mb-6">
         <h2 className="text-xl font-bold text-white flex items-center gap-2"><Brain size={22} className="text-accent" /> AI Trade</h2>
-        <p className="text-sm text-muted">Pick a market and timeframe — the AI reads the candlesticks and predicts the next candle</p>
+        <p className="text-sm text-muted">Pick a market and timeframe — the AI analyzes ALL timeframes simultaneously</p>
       </div>
 
       {error && <div className="card border-bad/50 text-bad text-sm mb-4">{error}</div>}
@@ -93,7 +93,7 @@ export default function AITrade() {
           </div>
         </div>
         <button onClick={runAnalysis} disabled={analyzing} className="btn-primary mt-4 w-full text-base py-2.5">
-          {analyzing ? <><Loader2 size={18} className="inline mr-2 animate-spin" />Analyzing candlesticks…</> : <><Brain size={18} className="inline mr-2" />Analyze Market</>}
+          {analyzing ? <><Loader2 size={18} className="inline mr-2 animate-spin" />Analyzing all timeframes…</> : <><Brain size={18} className="inline mr-2" />Analyze Market (Multi-Timeframe)</>}
         </button>
       </div>
 
@@ -104,6 +104,9 @@ export default function AITrade() {
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-1.5 text-muted"><Clock size={14} /><span className="font-mono text-xs">{fmtUTC(prediction.analysis_time_utc)}</span></div>
               <div className="flex items-center gap-1.5 text-accent"><Globe size={14} />{prediction.market_session}</div>
+            </div>
+            <div className={`badge ${prediction.cross_tf_alignment.includes("Strong") ? "bg-ok/20 text-ok" : prediction.cross_tf_alignment.includes("Conflicting") ? "bg-bad/20 text-bad" : "bg-warn/20 text-warn"}`}>
+              <Layers size={11} className="inline mr-1" />{prediction.cross_tf_alignment}
             </div>
           </div>
 
@@ -131,11 +134,44 @@ export default function AITrade() {
             </div>
           </div>
 
-          {/* Last candle + Predicted next candle */}
-          <div className="grid grid-cols-2 gap-3">
-            <CandleCard title="Last Candle" candle={prediction.last_candle} />
-            <CandleCard title="Predicted Next Candle" candle={prediction.predicted_candle} predicted />
-          </div>
+          {/* Multi-timeframe analysis */}
+          {prediction.timeframes && prediction.timeframes.length > 0 && (
+            <div className="card">
+              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><Layers size={15} className="text-accent" /> Multi-Timeframe Analysis</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead><tr className="text-left text-muted border-b border-ink-700">
+                    <th className="py-2 px-2">Timeframe</th>
+                    <th className="px-2">Trend</th>
+                    <th className="px-2">Dir</th>
+                    <th className="px-2">ADX</th>
+                    <th className="px-2">RSI</th>
+                    <th className="px-2">MACD</th>
+                    <th className="px-2">Stoch %K</th>
+                    <th className="px-2">Pattern</th>
+                    <th className="px-2">B/B</th>
+                    <th className="px-2">W</th>
+                  </tr></thead>
+                  <tbody>
+                    {[...prediction.timeframes].reverse().map((tf, i) => (
+                      <tr key={i} className="border-b border-ink-700/40">
+                        <td className="py-2 px-2 font-bold text-white">{tf.label}</td>
+                        <td className="px-2"><span className={tf.trend === "bullish" ? "text-ok" : tf.trend === "bearish" ? "text-bad" : "text-muted"}>{tf.trend}</span></td>
+                        <td className="px-2"><span className={tf.direction === "buy" ? "text-ok" : tf.direction === "sell" ? "text-bad" : "text-muted"}>{tf.direction}</span></td>
+                        <td className="px-2 text-gray-400 font-mono">{String(tf.trend_strength)}</td>
+                        <td className="px-2 text-gray-400 font-mono">{String(tf.rsi)}</td>
+                        <td className="px-2 text-gray-400 font-mono">{String(tf.macd)}</td>
+                        <td className="px-2 text-gray-400 font-mono">{String(tf.stoch_k)}</td>
+                        <td className="px-2 text-accent text-xs">{tf.dominant_pattern}</td>
+                        <td className="px-2 text-muted text-xs">{tf.bb_position}</td>
+                        <td className="px-2 text-muted font-mono">×{String(tf.weight)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* Scientific basis */}
           {prediction.scientific_basis && (
@@ -145,7 +181,7 @@ export default function AITrade() {
             </div>
           )}
 
-          {/* Full analysis report */}
+          {/* AI reasoning */}
           <div className="card">
             <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-2"><Activity size={15} className="text-accent" /> Full Analysis Report</h3>
             <pre className="text-xs text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">{prediction.reasoning}</pre>
@@ -154,22 +190,25 @@ export default function AITrade() {
           {/* Signal factors */}
           {prediction.signals && prediction.signals.length > 0 && (
             <div className="card">
-              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><BarChart3 size={15} className="text-accent" /> Evidence ({prediction.signals.filter(s => s.weight > 0).length} signals)</h3>
+              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><BarChart3 size={15} className="text-accent" /> Signal Breakdown ({prediction.signals.filter(s => s.weight > 0).length})</h3>
               <div className="space-y-1">
-                {prediction.signals.filter(s => s.weight > 0).map((s, i) => <FactorRow key={i} factor={s} />)}
+                {prediction.signals.filter(s => s.weight > 0).slice(0, 20).map((s, i) => (
+                  <FactorRow key={i} factor={s} />
+                ))}
               </div>
             </div>
           )}
 
           {/* Place trade */}
-          {prediction.direction !== "hold" ? (
+          {prediction.direction !== "hold" && (
             <button onClick={placeTrade} disabled={trading} className={`btn w-full text-base py-3 ${prediction.direction === "buy" ? "bg-ok text-white hover:bg-ok/80" : "bg-bad text-white hover:bg-bad/80"}`}>
               {trading ? <><Loader2 size={18} className="inline mr-2 animate-spin" />Placing trade…</> : <><Zap size={18} className="inline mr-2" />Place {prediction.direction.toUpperCase()} Trade on {prediction.symbol}</>}
             </button>
-          ) : (
+          )}
+          {prediction.direction === "hold" && (
             <div className="card text-center text-muted py-6">
               <Minus size={24} className="inline mb-2" />
-              <p>Insufficient evidence to predict next candle direction. Wait for a clearer setup.</p>
+              <p>Market is in equilibrium — insufficient evidence to commit. Wait for a clearer setup.</p>
             </div>
           )}
         </div>
@@ -178,27 +217,8 @@ export default function AITrade() {
   );
 }
 
-function CandleCard({ title, candle, predicted }: { title: string; candle: CandleSummary; predicted?: boolean }) {
-  const color = candle.direction === "bullish" ? "text-ok" : candle.direction === "bearish" ? "text-bad" : "text-muted";
-  const borderColor = predicted ? "border-accent/30" : "border-ink-700";
-  return (
-    <div className={`card ${borderColor}`}>
-      <h3 className="text-xs font-semibold text-muted mb-2 flex items-center gap-1"><CandlestickChart size={13} /> {title}</h3>
-      <div className={`text-sm font-bold ${color} uppercase mb-2`}>{candle.direction}</div>
-      <div className="grid grid-cols-2 gap-1 text-xs font-mono text-gray-400">
-        <div>O: <span className="text-gray-200">{fmt(candle.open, 5)}</span></div>
-        <div>C: <span className="text-gray-200">{fmt(candle.close, 5)}</span></div>
-        <div>H: <span className="text-gray-200">{fmt(candle.high, 5)}</span></div>
-        <div>L: <span className="text-gray-200">{fmt(candle.low, 5)}</span></div>
-        <div>Body: <span className="text-gray-200">{fmt(candle.body, 5)}</span></div>
-        <div>Pattern: <span className="text-accent">{candle.pattern}</span></div>
-      </div>
-    </div>
-  );
-}
-
 function FactorRow({ factor }: { factor: SignalFactor }) {
-  const Icon = factor.source.includes("candlestick") ? CandlestickChart : factor.source.includes("note") ? Brain : factor.source.includes("momentum") ? Zap : BarChart3;
+  const Icon = factor.source.includes("candlestick") ? Activity : factor.source.includes("note") ? Brain : factor.source.includes("momentum") ? Zap : BarChart3;
   const color = factor.direction === "bullish" ? "text-ok" : factor.direction === "bearish" ? "text-bad" : "text-muted";
   return (
     <div className="flex items-center gap-3 bg-ink-900 rounded px-3 py-2">
