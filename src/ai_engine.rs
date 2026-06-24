@@ -357,6 +357,152 @@ pub async fn analyze(
         if confirms == "buy" { bull += w; } else if confirms == "sell" { bear += w; }
     }
 
+    // ═══ REVERSAL DETECTION ═══
+    // The AI actively looks for reversal setups — where multiple signals
+    // converge to suggest the current trend is about to flip.
+
+    let rsi_val = ind.rsi.get(&14).copied().unwrap_or(Decimal::from(50));
+    let has_bull_pattern = ind.patterns.get("hammer").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("bullish_engulfing").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("morning_star").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("dragonfly_doji").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("piercing_line").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("bullish_harami").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE;
+    let has_bear_pattern = ind.patterns.get("shooting_star").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("bearish_engulfing").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("evening_star").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("gravestone_doji").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("dark_cloud_cover").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("bearish_harami").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE;
+    let price_below_bb_lower = ind.price < ind.bb_lower;
+    let price_above_bb_upper = ind.price > ind.bb_upper;
+    let stoch_oversold = ind.stoch_k < Decimal::from(20);
+    let stoch_overbought = ind.stoch_k > Decimal::from(80);
+    let near_support = ind.dist_from_swing_low_pct < Decimal::from(10);
+    let near_resistance = ind.dist_from_swing_high_pct < Decimal::from(10);
+
+    // Bullish reversal: oversold + reversal candle + at support.
+    let bull_reversal_signals = [
+        rsi_val < Decimal::from(35),           // RSI near oversold
+        has_bull_pattern,                       // Bullish reversal candlestick
+        stoch_oversold,                         // Stochastic oversold
+        price_below_bb_lower,                   // Below lower BB
+        near_support,                           // At swing low support
+        ind.consecutive_bearish >= 3,           // Downtrend exhaustion
+    ].iter().filter(|&&x| x).count();
+
+    if bull_reversal_signals >= 2 {
+        let w = Decimal::from(3);
+        let signals_str = {
+            let mut parts: Vec<String> = Vec::new();
+            if rsi_val < Decimal::from(35) { parts.push("RSI oversold".to_string()); }
+            if has_bull_pattern { parts.push("reversal candlestick".to_string()); }
+            if stoch_oversold { parts.push("Stochastic oversold".to_string()); }
+            if price_below_bb_lower { parts.push("below lower BB".to_string()); }
+            if near_support { parts.push("at support".to_string()); }
+            if ind.consecutive_bearish >= 3 { parts.push(format!("{} bearish candles exhaustion", ind.consecutive_bearish)); }
+            parts.join(", ")
+        };
+        evidence.push(Evidence {
+            source: "reversal".into(),
+            finding: format!("BULLISH REVERSAL SETUP: {} convergence signals detected ({}). The downtrend may be exhausted — a bounce is probable.", bull_reversal_signals, signals_str),
+            confirms: "buy".into(), weight: w,
+        });
+        bull += w;
+    }
+
+    // Bearish reversal: overbought + reversal candle + at resistance.
+    let bear_reversal_signals = [
+        rsi_val > Decimal::from(65),
+        has_bear_pattern,
+        stoch_overbought,
+        price_above_bb_upper,
+        near_resistance,
+        ind.consecutive_bullish >= 3,
+    ].iter().filter(|&&x| x).count();
+
+    if bear_reversal_signals >= 2 {
+        let w = Decimal::from(3);
+        let signals_str = {
+            let mut parts = Vec::new();
+            if rsi_val > Decimal::from(65) { parts.push("RSI overbought".to_string()); }
+            if has_bear_pattern { parts.push("reversal candlestick".to_string()); }
+            if stoch_overbought { parts.push("Stochastic overbought".to_string()); }
+            if price_above_bb_upper { parts.push("above upper BB".to_string()); }
+            if near_resistance { parts.push("at resistance".to_string()); }
+            if ind.consecutive_bullish >= 3 { parts.push(format!("{} bullish candles exhaustion", ind.consecutive_bullish)); }
+            parts.join(", ")
+        };
+        evidence.push(Evidence {
+            source: "reversal".into(),
+            finding: format!("BEARISH REVERSAL SETUP: {} convergence signals detected ({}). The uptrend may be exhausted — a pullback is probable.", bear_reversal_signals, signals_str),
+            confirms: "sell".into(), weight: w,
+        });
+        bear += w;
+    }
+
+    // RSI divergence (simplified): RSI turning up while price still falling.
+    if rsi_val < Decimal::from(40) && ind.roc_5 < Decimal::ZERO && has_bull_pattern {
+        let w = Decimal::from(2);
+        evidence.push(Evidence {
+            source: "reversal".into(),
+            finding: format!("Potential BULLISH DIVERGENCE: RSI is {} (oversold zone) and a reversal candlestick appeared while price is still falling. Momentum is diverging from price — reversal likely.", rsi_val),
+            confirms: "buy".into(), weight: w,
+        });
+        bull += w;
+    }
+    if rsi_val > Decimal::from(60) && ind.roc_5 > Decimal::ZERO && has_bear_pattern {
+        let w = Decimal::from(2);
+        evidence.push(Evidence {
+            source: "reversal".into(),
+            finding: format!("Potential BEARISH DIVERGENCE: RSI is {} (overbought zone) and a reversal candlestick appeared while price is still rising. Momentum is diverging from price — reversal likely.", rsi_val),
+            confirms: "sell".into(), weight: w,
+        });
+        bear += w;
+    }
+
+    // BB squeeze breakout direction hint.
+    if ind.bb_width_pct < Decimal::from(20) && ind.volatility_regime == "contracting" {
+        // Squeeze — check which side of the middle band price is on for breakout direction.
+        if ind.price > ind.bb_middle {
+            let w = Decimal::from(1);
+            evidence.push(Evidence {
+                source: "reversal".into(),
+                finding: format!("BB squeeze (width percentile {}) with price above mid-band. Breakout direction likely UPWARD. Wait for candle close above upper band to confirm.", ind.bb_width_pct),
+                confirms: "buy".into(), weight: w,
+            });
+            bull += w;
+        } else if ind.price < ind.bb_middle {
+            let w = Decimal::from(1);
+            evidence.push(Evidence {
+                source: "reversal".into(),
+                finding: format!("BB squeeze (width percentile {}) with price below mid-band. Breakout direction likely DOWNWARD. Wait for candle close below lower band to confirm.", ind.bb_width_pct),
+                confirms: "sell".into(), weight: w,
+            });
+            bear += w;
+        }
+    }
+
+    // Stochastic crossover hint (simplified: %K crossing back from extreme).
+    if ind.stoch_k < Decimal::from(20) && ind.stoch_k > ind.stoch_d {
+        let w = Decimal::from(1);
+        evidence.push(Evidence {
+            source: "reversal".into(),
+            finding: format!("Stochastic bullish crossover: %K ({}) crossed above %D ({}) from oversold zone. Early bullish reversal signal.", ind.stoch_k, ind.stoch_d),
+            confirms: "buy".into(), weight: w,
+        });
+        bull += w;
+    }
+    if ind.stoch_k > Decimal::from(80) && ind.stoch_k < ind.stoch_d {
+        let w = Decimal::from(1);
+        evidence.push(Evidence {
+            source: "reversal".into(),
+            finding: format!("Stochastic bearish crossover: %K ({}) crossed below %D ({}) from overbought zone. Early bearish reversal signal.", ind.stoch_k, ind.stoch_d),
+            confirms: "sell".into(), weight: w,
+        });
+        bear += w;
+    }
+
     // --- Upper timeframe evidence ---
     if upper_bull > upper_bear && upper_bull > 0 {
         let w = Decimal::from(3);
@@ -444,6 +590,25 @@ pub async fn analyze(
     }
     if ind.consecutive_bullish >= 3 || ind.consecutive_bearish >= 3 {
         what_to_watch.push(format!("Candle exhaustion: {} consecutive candles in one direction. Watch for reversal.", ind.consecutive_bullish.max(ind.consecutive_bearish)));
+    }
+    // Reversal watch conditions.
+    if rsi_val < Decimal::from(35) {
+        what_to_watch.push(format!("RSI is {} — if it crosses back above 30, bullish reversal is CONFIRMED. If it keeps falling below 20, downtrend is accelerating.", rsi_val));
+    }
+    if rsi_val > Decimal::from(65) {
+        what_to_watch.push(format!("RSI is {} — if it crosses back below 70, bearish reversal is CONFIRMED. If it keeps rising above 80, uptrend is accelerating.", rsi_val));
+    }
+    if has_bull_pattern {
+        what_to_watch.push("Bullish reversal candlestick detected — watch if the NEXT candle confirms by closing higher. If it closes lower, the pattern failed.".into());
+    }
+    if has_bear_pattern {
+        what_to_watch.push("Bearish reversal candlestick detected — watch if the NEXT candle confirms by closing lower. If it closes higher, the pattern failed.".into());
+    }
+    if ind.stoch_k < Decimal::from(25) {
+        what_to_watch.push(format!("Stochastic %K is {} — watch for %K crossing above %D ({}). That crossover confirms bullish reversal.", ind.stoch_k, ind.stoch_d));
+    }
+    if ind.stoch_k > Decimal::from(75) {
+        what_to_watch.push(format!("Stochastic %K is {} — watch for %K crossing below %D ({}). That crossover confirms bearish reversal.", ind.stoch_k, ind.stoch_d));
     }
     what_to_watch.push(format!("Next candle in {} — watch the open. If it gaps in the bias direction, confidence increases.", format_countdown((candles.last().unwrap().ts + Duration::seconds(tf_secs as i64) - now).num_seconds().max(0))));
 
