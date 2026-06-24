@@ -1,8 +1,20 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "../lib/api";
 import type { Prediction, Evidence, Account } from "../lib/api";
 import { fmt, fmtPct } from "../lib/fmt";
 import { Brain, Loader2, TrendingUp, TrendingDown, Minus, Zap, Clock, Globe, Target, Activity, BarChart3, Eye, Layers, Wallet } from "lucide-react";
+
+// TradingView symbol mapping
+const TV_SYMBOLS: Record<string, string> = {
+  "R_100": "DERIV:VOLATILITY100",
+  "R_75": "DERIV:VOLATILITY75",
+  "R_50": "DERIV:VOLATILITY50",
+  "R_25": "DERIV:VOLATILITY25",
+  "frxEURUSD": "FX:EURUSD",
+  "frxGBPUSD": "FX:GBPUSD",
+  "frxUSDJPY": "FX:USDJPY",
+  "frxAUDUSD": "FX:AUDUSD",
+};
 
 const MARKETS = [
   { symbol: "R_100", label: "Volatility 100 Index", class: "derivindex" },
@@ -126,6 +138,9 @@ export default function AITrade() {
           <p className="text-xs text-muted mt-2">{tradeResult.message}</p>
         </div>
       )}
+
+      {/* TradingView Live Chart */}
+      <TradingViewChart symbol={TV_SYMBOLS[symbol] || "DERIV:VOLATILITY100"} timeframe={timeframe} />
 
       {/* Controls */}
       <div className="card mb-6">
@@ -315,8 +330,57 @@ function EvidenceRow({ evidence }: { evidence: Evidence }) {
         <span className="text-sm text-gray-300">{evidence.finding}</span>
       </div>
       <span className={`text-xs font-bold shrink-0 mt-0.5 ${color}`}>
-        {evidence.confirms === "buy" ? "→ BUY" : evidence.confirms === "sell" ? "→ SELL" : ""}
+        {evidence.confirms === "buy" ? "-> BUY" : evidence.confirms === "sell" ? "-> SELL" : ""}
       </span>
+    </div>
+  );
+}
+
+function TradingViewChart({ symbol, timeframe }: { symbol: string; timeframe: number }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    containerRef.current.innerHTML = "";
+
+    const tvInterval = timeframe <= 1 ? "1" :
+      timeframe <= 5 ? "5" :
+      timeframe <= 15 ? "15" :
+      timeframe <= 30 ? "30" :
+      timeframe <= 60 ? "60" :
+      timeframe <= 240 ? "240" : "D";
+
+    const script = document.createElement("script");
+    script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
+    script.async = true;
+    script.innerHTML = JSON.stringify({
+      autosize: true,
+      symbol: symbol,
+      interval: tvInterval,
+      timezone: "UTC",
+      theme: "dark",
+      style: "1",
+      locale: "en",
+      enable_publishing: false,
+      hide_side_toolbar: false,
+      allow_symbol_change: true,
+      studies: ["STD;RSI", "STD;MACD", "STD;Stochastic"],
+      backgroundColor: "#0d1117",
+      gridColor: "#21262d",
+      support_host: "https://www.tradingview.com",
+    });
+
+    containerRef.current.appendChild(script);
+  }, [symbol, timeframe]);
+
+  return (
+    <div className="card mb-6 p-0 overflow-hidden" style={{ height: "500px" }}>
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-ink-700">
+        <BarChart3 size={15} className="text-accent" />
+        <span className="text-sm font-semibold text-white">Live Chart — {symbol}</span>
+        <span className="text-xs text-muted ml-auto">Powered by TradingView</span>
+      </div>
+      <div ref={containerRef} className="tradingview-widget-container" style={{ height: "calc(100% - 37px)", width: "100%" }} />
     </div>
   );
 }

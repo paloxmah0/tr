@@ -1,18 +1,47 @@
-[2m2026-06-24T17:50:59.588519Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m no OANDA token — using Deriv for forex data too
-[2m2026-06-24T17:50:59.966849Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m engine loop started [3mtick_secs[0m[2m=[0m10
-[2m2026-06-24T17:50:59.967327Z[0m [32m INFO[0m [2mtrading_backend::learning[0m[2m:[0m learning loop started
-[2m2026-06-24T17:50:59.970034Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m listening on 0.0.0.0:8080
-[2m2026-06-24T17:51:00.610368Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m database migrations applied
-[2m2026-06-24T17:51:00.730723Z[0m [32m INFO[0m [2mtrading_backend::dynamic_config[0m[2m:[0m loaded persisted settings from DB
-[2m2026-06-24T17:51:00.803135Z[0m [32m INFO[0m [2mtrading_backend::seeder[0m[2m:[0m seeding database with demo account, strategies, and notes…
-[2m2026-06-24T17:51:01.641802Z[0m [32m INFO[0m [2mtrading_backend::seeder[0m[2m:[0m seeded: 1 account, 12 strategies, 5 notes
-[2m2026-06-24T17:51:07.278005Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m connecting to Deriv WebSocket [3murl[0m[2m=[0mwss://ws.derivws.com/websockets/v3?app_id=1089
-[2m2026-06-24T17:51:08.585270Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m attempting deriv authorize [3mtoken_len[0m[2m=[0m14
-[2m2026-06-24T17:51:08.899919Z[0m [33m WARN[0m [2mtrading_backend::market::deriv[0m[2m:[0m deriv authorize failed — will retry without token (anonymous mode) [3mtoken_len[0m[2m=[0m14 [3merror_code[0m[2m=[0m"InvalidToken" [3merror_msg[0m[2m=[0m"The token is invalid."
-[2m2026-06-24T17:51:08.900742Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m deriv running in anonymous mode (market data only, no trading)
-[2m2026-06-24T17:51:10.609176Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m connecting to Deriv WebSocket [3murl[0m[2m=[0mwss://ws.derivws.com/websockets/v3?app_id=1089
-[2m2026-06-24T17:51:11.615842Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m attempting deriv authorize [3mtoken_len[0m[2m=[0m14
-[2m2026-06-24T17:51:11.879131Z[0m [33m WARN[0m [2mtrading_backend::market::deriv[0m[2m:[0m deriv authorize failed — will retry without token (anonymous mode) [3mtoken_len[0m[2m=[0m14 [3merror_code[0m[2m=[0m"InvalidToken" [3merror_msg[0m[2m=[0m"The token is invalid."
-[2m2026-06-24T17:51:11.880203Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m deriv running in anonymous mode (market data only, no trading)
-[2m2026-06-24T17:51:12.671038Z[0m [32m INFO[0m [2mtrading_backend::api::ai_trade[0m[2m:[0m placing LIVE trade via broker [3msymbol[0m[2m=[0mR_100 [3mdirection[0m[2m=[0mbuy [3mstake[0m[2m=[0m10
-[2m2026-06-24T17:51:12.958329Z[0m [33m WARN[0m [2mtrading_backend::api::ai_trade[0m[2m:[0m live trade failed, falling back to paper mode [3merror[0m[2m=[0mexecution error: deriv proposal: take_profit is not a valid input for contract type CALL.
+[2m2026-06-24T18:02:42.622570Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m no OANDA token — using Deriv for forex data too
+[2m2026-06-24T18:02:42.624058Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m engine loop started [3mtick_secs[0m[2m=[0m10
+[2m2026-06-24T18:02:42.624304Z[0m [32m INFO[0m [2mtrading_backend::learning[0m[2m:[0m learning loop started
+[2m2026-06-24T18:02:42.625987Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m listening on 0.0.0.0:8080
+[2m2026-06-24T18:02:42.634040Z[0m [31mERROR[0m [2mtrading_backend::engine_loop[0m[2m:[0m engine tick failed [3merror[0m[2m=[0mdatabase error: error returned from database: (code: 1) no such table: strategies
+[2m2026-06-24T18:02:42.644772Z[0m [33m WARN[0m [2mtrading_backend::learning[0m[2m:[0m learning cycle failed [3merror[0m[2m=[0mdatabase error: error returned from database: (code: 1) no such table: accounts
+[2m2026-06-24T18:02:42.667733Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m database migrations applied
+[2m2026-06-24T18:02:42.671179Z[0m [32m INFO[0m [2mtrading_backend::dynamic_config[0m[2m:[0m loaded persisted settings from DB
+[2m2026-06-24T18:02:42.674617Z[0m [32m INFO[0m [2mtrading_backend::seeder[0m[2m:[0m seeding database with demo account, strategies, and notes…
+[2m2026-06-24T18:02:42.845799Z[0m [32m INFO[0m [2mtrading_backend::seeder[0m[2m:[0m seeded: 1 account, 12 strategies, 5 notes
+[2m2026-06-24T18:02:50.967580Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m connecting to Deriv WebSocket [3murl[0m[2m=[0mwss://ws.derivws.com/websockets/v3?app_id=1089
+[2m2026-06-24T18:02:54.853044Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mDoji Reversal [3msymbol[0m[2m=[0mfrxEURUSD [3mstrength[0m[2m=[0m0.666667
+[2m2026-06-24T18:02:55.135184Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mfrxEURUSD [3mside[0m[2m=[0mBuy
+[2m2026-06-24T18:02:57.116494Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mR_100 Hammer Reversal [3msymbol[0m[2m=[0mR_100 [3mstrength[0m[2m=[0m0.333333
+[2m2026-06-24T18:02:57.526555Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mR_100 [3mside[0m[2m=[0mSell
+[2m2026-06-24T18:02:59.131093Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mR_75 Bullish Engulfing [3msymbol[0m[2m=[0mR_75 [3mstrength[0m[2m=[0m0.25
+[2m2026-06-24T18:02:59.497091Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mR_75 [3mside[0m[2m=[0mBuy
+[2m2026-06-24T18:03:02.823843Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mR_100 Bearish Engulfing Short [3msymbol[0m[2m=[0mR_100 [3mstrength[0m[2m=[0m0.571429
+[2m2026-06-24T18:03:03.107918Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mR_100 [3mside[0m[2m=[0mSell
+[2m2026-06-24T18:03:06.962392Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mPiercing Line Reversal [3msymbol[0m[2m=[0mfrxEURUSD [3mstrength[0m[2m=[0m0.333333
+[2m2026-06-24T18:03:07.242545Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mfrxEURUSD [3mside[0m[2m=[0mSell
+[2m2026-06-24T18:03:09.627013Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mRSI + MACD Momentum [3msymbol[0m[2m=[0mR_100 [3mstrength[0m[2m=[0m0.375
+[2m2026-06-24T18:03:09.933389Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mR_100 [3mside[0m[2m=[0mSell
+[2m2026-06-24T18:03:21.068678Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade closed [3mtrade[0m[2m=[0mc14d0eed-4d34-4e6a-ac13-8133516d983c [3mmark[0m[2m=[0mstop [3mpnl[0m[2m=[0m-247.463487030654092331808274
+[2m2026-06-24T18:03:24.705721Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mHammer Candle Reversal [3msymbol[0m[2m=[0mfrxEURUSD [3mstrength[0m[2m=[0m0.333333
+[2m2026-06-24T18:03:24.993577Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mfrxEURUSD [3mside[0m[2m=[0mSell
+[2m2026-06-24T18:03:37.412660Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mR_100 Hammer Reversal [3msymbol[0m[2m=[0mR_100 [3mstrength[0m[2m=[0m0.333333
+[2m2026-06-24T18:03:37.719968Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mR_100 [3mside[0m[2m=[0mBuy
+[2m2026-06-24T18:03:40.718610Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mR_75 Bullish Engulfing [3msymbol[0m[2m=[0mR_75 [3mstrength[0m[2m=[0m0.25
+[2m2026-06-24T18:03:41.013816Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mR_75 [3mside[0m[2m=[0mBuy
+[2m2026-06-24T18:04:00.392924Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mRSI + MACD Momentum [3msymbol[0m[2m=[0mR_100 [3mstrength[0m[2m=[0m0.375
+[2m2026-06-24T18:04:00.948426Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mR_100 [3mside[0m[2m=[0mSell
+[2m2026-06-24T18:04:17.864557Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mHammer Candle Reversal [3msymbol[0m[2m=[0mfrxEURUSD [3mstrength[0m[2m=[0m0.333333
+[2m2026-06-24T18:04:18.166455Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mfrxEURUSD [3mside[0m[2m=[0mSell
+[2m2026-06-24T18:04:26.120050Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mDoji Reversal [3msymbol[0m[2m=[0mfrxEURUSD [3mstrength[0m[2m=[0m0.666667
+[2m2026-06-24T18:04:28.469431Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mfrxEURUSD [3mside[0m[2m=[0mBuy
+[2m2026-06-24T18:04:34.082728Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade closed [3mtrade[0m[2m=[0m3e22d375-f4c3-444c-a667-67d778f44e70 [3mmark[0m[2m=[0mtp [3mpnl[0m[2m=[0m526.561689690158738560593339
+[2m2026-06-24T18:04:39.664102Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mR_100 Hammer Reversal [3msymbol[0m[2m=[0mR_100 [3mstrength[0m[2m=[0m0.333333
+[2m2026-06-24T18:04:39.971662Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mR_100 [3mside[0m[2m=[0mSell
+[2m2026-06-24T18:04:44.356462Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mR_75 Bullish Engulfing [3msymbol[0m[2m=[0mR_75 [3mstrength[0m[2m=[0m0.25
+[2m2026-06-24T18:04:44.676525Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mR_75 [3mside[0m[2m=[0mBuy
+[2m2026-06-24T18:05:06.726974Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mRSI + MACD Momentum [3msymbol[0m[2m=[0mR_100 [3mstrength[0m[2m=[0m0.375
+[2m2026-06-24T18:05:07.033129Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mR_100 [3mside[0m[2m=[0mSell
+[2m2026-06-24T18:05:46.958442Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mR_100 Hammer Reversal [3msymbol[0m[2m=[0mR_100 [3mstrength[0m[2m=[0m0.777778
+[2m2026-06-24T18:05:47.263320Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mR_100 [3mside[0m[2m=[0mBuy
+[2m2026-06-24T18:05:52.149451Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mR_75 Bullish Engulfing [3msymbol[0m[2m=[0mR_75 [3mstrength[0m[2m=[0m0.25
+[2m2026-06-24T18:05:52.484862Z[0m [32m INFO[0m [2mtrading_backend::execution[0m[2m:[0m trade opened [3mmode[0m[2m=[0mPaper [3msymbol[0m[2m=[0mR_75 [3mside[0m[2m=[0mSell
