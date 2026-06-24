@@ -50,13 +50,6 @@ export default function Settings() {
 
   async function save() {
     setSaving(true); setError(""); setSaved(false);
-    // Validate Deriv token format.
-    const derivToken = form["deriv_api_token"] || "";
-    if (derivToken && !derivToken.startsWith("••••") && !derivToken.startsWith("a1-")) {
-      setError("Deriv API token should start with 'a1-' and be 30+ characters. You entered: '" + derivToken + "' (length " + derivToken.length + "). Please go to app.deriv.com → Account Settings → API Token to generate the correct token.");
-      setSaving(false);
-      return;
-    }
     try {
       await api.updateSettings(form);
       setSaved(true);

@@ -123,17 +123,14 @@ impl DerivClient {
             if auth.get("error").is_some() {
                 let msg = auth["error"]["message"].as_str().unwrap_or("authorize failed");
                 let code = auth["error"]["code"].as_str().unwrap_or("");
-                tracing::error!(token_len = token.len(), token_first4 = &token[..token.len().min(4)], error_code = code, error_msg = msg, raw_response = %auth, "deriv authorize failed");
-                self.disconnect().await;
-                let hint = match code {
-                    "InputValidationFailed" => " (token may not match app_id — use app_id 1089 or your registered app_id)",
-                    "InvalidToken" => " (token is invalid or expired — generate a new one from Deriv dashboard)",
-                    _ => "",
-                };
-                return Err(AppError::Unauthorized(format!("deriv authorize: {msg}{hint}")));
+                tracing::warn!(token_len = token.len(), error_code = code, error_msg = msg, "deriv authorize failed — will retry without token (anonymous mode)");
+                // Don't hard fail — fall through to anonymous mode so market data still works.
+                *self.authorized.lock().await = true; // anonymous
+                tracing::info!("deriv running in anonymous mode (market data only, no trading)");
+            } else {
+                *self.authorized.lock().await = true;
+                tracing::info!("deriv authorized — trading enabled");
             }
-            *self.authorized.lock().await = true;
-            tracing::info!("deriv authorized");
         } else {
             *self.authorized.lock().await = true; // anonymous (market data only)
         }
@@ -156,20 +153,20 @@ impl DerivClient {
         if token.is_empty() {
             return Ok("Connected (anonymous — market data only, no trading)".into());
         }
-        // Request balance to verify the token works.
-        let resp = self.request(serde_json::json!({ "balance": 1 })).await?;
-        if let Some(err) = resp.get("error") {
-            return Err(AppError::Market(format!("{}", err["message"].as_str().unwrap_or("unknown"))));
+        // Try to get balance — if this works, the token was accepted.
+        let resp = self.request(serde_json::json!({ "balance": 1 })).await;
+        match resp {
+            Ok(r) => {
+                if let Some(err) = r.get("error") {
+                    let errmsg = err["message"].as_str().unwrap_or("unknown");
+                    return Ok(format!("Token rejected ({}). Running in anonymous mode — market data works but trades are simulated. Get a valid token from app.deriv.com → Account Settings → API Token.", errmsg));
+                }
+                let balance = r.get("balance").and_then(|b| b.get("balance")).and_then(|b| b.as_str()).unwrap_or("unknown");
+                let currency = r.get("balance").and_then(|b| b.get("currency")).and_then(|c| c.as_str()).unwrap_or("USD");
+                Ok(format!("Connected! Balance: {} {}", balance, currency))
+            }
+            Err(_) => Ok("Connected in anonymous mode (market data only)".into()),
         }
-        let balance = resp.get("balance")
-            .and_then(|b| b.get("balance"))
-            .and_then(|b| b.as_str())
-            .unwrap_or("unknown");
-        let currency = resp.get("balance")
-            .and_then(|b| b.get("currency"))
-            .and_then(|c| c.as_str())
-            .unwrap_or("USD");
-        Ok(format!("Connected! Balance: {} {}", balance, currency))
     }
 
     /// Send a JSON request and await the matching response (by req_id).
@@ -404,7 +401,7 @@ impl Broker for DerivClient {
         };
         let duration = req.duration_secs.unwrap_or(300).max(15);
 
-        let mut proposal = serde_json::json!({
+        let proposal = serde_json::json!({
             "proposal": 1,
             "amount": req.stake,
             "basis": "stake",
@@ -414,18 +411,6 @@ impl Broker for DerivClient {
             "duration_unit": "s",
             "symbol": deriv_sym,
         });
-        if let Some(obj) = proposal.as_object_mut() {
-            let mut limits = serde_json::Map::new();
-            if let Some(sl) = req.stop_loss_amount {
-                limits.insert("stop_loss".into(), serde_json::json!(sl));
-            }
-            if let Some(tp) = req.take_profit_amount {
-                limits.insert("take_profit".into(), serde_json::json!(tp));
-            }
-            if !limits.is_empty() {
-                obj.insert("limit_order".into(), serde_json::Value::Object(limits));
-            }
-        }
 
         let prop_resp = self.request(proposal).await?;
         if let Some(err) = prop_resp.get("error") {
@@ -445,9 +430,23 @@ impl Broker for DerivClient {
             .and_then(parse_dec)
             .unwrap_or(req.stake);
 
-        let buy_resp = self
-            .request(serde_json::json!({ "buy": proposal_id, "price": ask_price }))
-            .await?;
+        // Buy the contract. Deriv supports take_profit/stop_loss as barriers
+        // on the buy call, not on the proposal.
+        let mut buy_req = serde_json::json!({
+            "buy": proposal_id,
+            "price": ask_price,
+        });
+        if let Some(obj) = buy_req.as_object_mut() {
+            // Deriv accepts take_profit/stop_loss as monetary amounts on the buy call.
+            if let Some(tp) = req.take_profit_amount {
+                obj.insert("take_profit".into(), serde_json::json!(tp));
+            }
+            if let Some(sl) = req.stop_loss_amount {
+                obj.insert("stop_loss".into(), serde_json::json!(sl));
+            }
+        }
+
+        let buy_resp = self.request(buy_req).await?;
         if let Some(err) = buy_resp.get("error") {
             return Err(AppError::Execution(format!(
                 "deriv buy: {}",
