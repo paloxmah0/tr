@@ -14,12 +14,12 @@ const FIELDS = [
     { key: "llm_api_key", label: "API Key", placeholder: "sk-...", type: "password" },
     { key: "llm_model", label: "Model", placeholder: "gpt-4o-mini", type: "text" },
   ]},
-  { section: "Deriv (Derivative Indices)", items: [
-    { key: "deriv_app_id", label: "App ID", placeholder: "1089", type: "text" },
-    { key: "deriv_api_token", label: "API Token", placeholder: "Deriv API token", type: "password" },
-    { key: "deriv_account_id", label: "Account ID", placeholder: "CR123456", type: "text" },
+  { section: "Deriv (Derivative Indices + Forex)", hint: "Get your API token from: app.deriv.com → Settings → API Token. NOT from api.deriv.com dashboard. The token looks like: a1-XXXXXXXXXXXX", items: [
+    { key: "deriv_app_id", label: "App ID", placeholder: "1089 (default test)", type: "text" },
+    { key: "deriv_api_token", label: "API Token", placeholder: "a1-XXXXXXXXXXXX (from app.deriv.com)", type: "password" },
+    { key: "deriv_account_id", label: "Account ID (optional)", placeholder: "CR123456 or VRTC123456", type: "text" },
   ]},
-  { section: "OANDA (Forex Spot)", items: [
+  { section: "OANDA (Forex Spot — optional)", items: [
     { key: "oanda_base_url", label: "Base URL", placeholder: "https://api-fxpractice.oanda.com", type: "text" },
     { key: "oanda_api_token", label: "API Token", placeholder: "OANDA API token", type: "password" },
     { key: "oanda_account_id", label: "Account ID", placeholder: "001-001-0000-001", type: "text" },
@@ -84,7 +84,9 @@ export default function Settings() {
         <div className="space-y-6 max-w-2xl">
           {FIELDS.map(group => (
             <div key={group.section} className="card">
-              <h3 className="text-sm font-semibold text-white mb-4">{group.section}</h3>
+              <h3 className="text-sm font-semibold text-white mb-1">{group.section}</h3>
+              {(group as any).hint && <p className="text-xs text-warn mb-4 bg-warn/5 rounded px-2 py-1.5 border border-warn/20">{(group as any).hint}</p>}
+              {!('hint' in group) && <div className="mb-4" />}
               <div className="space-y-3">
                 {group.items.map(item => (
                   <div key={item.key}>
