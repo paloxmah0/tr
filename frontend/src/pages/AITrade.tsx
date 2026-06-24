@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { api } from "../lib/api";
-import type { Prediction, SignalFactor } from "../lib/api";
+import type { Prediction, Evidence } from "../lib/api";
 import { fmt, fmtPct } from "../lib/fmt";
-import { Brain, Loader2, TrendingUp, TrendingDown, Minus, Zap, Activity, BarChart3, Clock, Globe, Target, CandlestickChart, Layers } from "lucide-react";
+import { Brain, Loader2, TrendingUp, TrendingDown, Minus, Zap, Clock, Globe, Target, Activity, BarChart3, Eye, Layers } from "lucide-react";
 
 const MARKETS = [
   { symbol: "R_100", label: "Volatility 100 Index", class: "derivindex" },
@@ -25,6 +25,16 @@ function fmtUTC(s: string): string {
   return new Date(s).toISOString().replace("T", " ").slice(0, 19) + " UTC";
 }
 
+const STATE_LABELS: Record<string, string> = {
+  trending_up: "Trending Up",
+  trending_down: "Trending Down",
+  ranging: "Ranging",
+  reversing_up: "Reversing Up",
+  reversing_down: "Reversing Down",
+  squeeze: "Volatility Squeeze",
+  mixed: "Mixed Signals",
+};
+
 export default function AITrade() {
   const [symbol, setSymbol] = useState("R_100");
   const [timeframe, setTimeframe] = useState(15);
@@ -42,7 +52,7 @@ export default function AITrade() {
   }
 
   async function placeTrade() {
-    if (!prediction || prediction.direction === "hold") return;
+    if (!prediction || prediction.direction === "wait") return;
     setTrading(true); setError("");
     try {
       const m = MARKETS.find(m => m.symbol === symbol);
@@ -51,16 +61,18 @@ export default function AITrade() {
     } catch (e: any) { setError(e.message); } finally { setTrading(false); }
   }
 
-  const dir = prediction?.next_candle_direction;
-  const DirIcon = dir === "bullish" ? TrendingUp : dir === "bearish" ? TrendingDown : Minus;
-  const dirColor = dir === "bullish" ? "text-ok" : dir === "bearish" ? "text-bad" : "text-muted";
-  const dirBg = dir === "bullish" ? "bg-ok/10 border-ok/30" : dir === "bearish" ? "bg-bad/10 border-bad/30" : "bg-ink-800 border-ink-700";
+  const DirIcon = prediction?.direction === "buy" ? TrendingUp : prediction?.direction === "sell" ? TrendingDown : Minus;
+  const dirColor = prediction?.direction === "buy" ? "text-ok" : prediction?.direction === "sell" ? "text-bad" : "text-muted";
+  const dirBg = prediction?.direction === "buy" ? "bg-ok/10 border-ok/30" : prediction?.direction === "sell" ? "bg-bad/10 border-bad/30" : "bg-ink-800 border-ink-700";
+
+  const bullCount = prediction?.evidence.filter(e => e.confirms === "buy" && e.weight > 0).length || 0;
+  const bearCount = prediction?.evidence.filter(e => e.confirms === "sell" && e.weight > 0).length || 0;
 
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-xl font-bold text-white flex items-center gap-2"><Brain size={22} className="text-accent" /> AI Trade</h2>
-        <p className="text-sm text-muted">Pick a market and timeframe — the AI predicts the NEXT candle</p>
+        <h2 className="text-xl font-bold text-white flex items-center gap-2"><Brain size={22} className="text-accent" /> AI Market Reader</h2>
+        <p className="text-sm text-muted">Reads the current market state with tools + candlestick knowledge. Evidence-based, not prediction.</p>
       </div>
 
       {error && <div className="card border-bad/50 text-bad text-sm mb-4">{error}</div>}
@@ -87,44 +99,44 @@ export default function AITrade() {
           </div>
         </div>
         <button onClick={runAnalysis} disabled={analyzing} className="btn-primary mt-4 w-full text-base py-2.5">
-          {analyzing ? <><Loader2 size={18} className="inline mr-2 animate-spin" />Predicting next candle…</> : <><Brain size={18} className="inline mr-2" />Predict Next Candle</>}
+          {analyzing ? <><Loader2 size={18} className="inline mr-2 animate-spin" />Reading the market…</> : <><Brain size={18} className="inline mr-2" />Read Market</>}
         </button>
       </div>
 
       {prediction && (
         <div className="space-y-4">
-          {/* Time + session + countdown */}
+          {/* Header: time + session + countdown */}
           <div className="card flex items-center justify-between text-sm">
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-1.5 text-muted"><Clock size={14} /><span className="font-mono text-xs">{fmtUTC(prediction.analysis_time_utc)}</span></div>
               <div className="flex items-center gap-1.5 text-accent"><Globe size={14} />{prediction.market_session}</div>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-muted">Next candle in:</span>
+              <span className="text-xs text-muted">Next candle:</span>
               <span className="font-mono text-sm font-bold text-warn bg-warn/10 px-2 py-0.5 rounded">{prediction.countdown}</span>
             </div>
           </div>
 
-          {/* THE ANSWER */}
+          {/* Market state + trade bias */}
           <div className={`card border-2 ${dirBg}`}>
-            <div className="text-center">
-              <div className="label mb-2">What will the next {prediction.timeframe_secs / 60}min candle be?</div>
-              <div className="flex items-center justify-center gap-3 mb-4">
-                <DirIcon size={40} className={dirColor} />
-                <span className={`text-3xl font-bold ${dirColor} uppercase`}>{prediction.next_candle_direction}</span>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="label mb-1">Current Market State</div>
+                <div className="text-lg font-bold text-white">{STATE_LABELS[prediction.market_state] || prediction.market_state}</div>
               </div>
-              <div className={`text-5xl font-bold ${dirColor} mb-2`}>{fmtPct(prediction.confidence)}</div>
-              <div className="text-xs text-muted">confidence</div>
-              <div className="mt-3 text-xs text-muted">
-                Next candle starts in <span className="font-mono font-bold text-warn">{prediction.countdown}</span>
+              <div className="text-right">
+                <div className="label">Evidence Score</div>
+                <div className={`text-3xl font-bold ${dirColor}`}>{fmtPct(prediction.evidence_score)}</div>
               </div>
             </div>
-            {/* Projected OHLC */}
-            <div className="grid grid-cols-4 gap-2 mt-4 pt-4 border-t border-ink-700 text-center">
-              <div><div className="label">Open</div><div className="font-mono text-sm text-gray-200">{fmt(prediction.next_candle_open, 5)}</div></div>
-              <div><div className="label">High</div><div className="font-mono text-sm text-gray-200">{fmt(prediction.next_candle_high, 5)}</div></div>
-              <div><div className="label">Low</div><div className="font-mono text-sm text-gray-200">{fmt(prediction.next_candle_low, 5)}</div></div>
-              <div><div className="label">Close</div><div className={`font-mono text-sm ${dir === "bullish" ? "text-ok" : dir === "bearish" ? "text-bad" : "text-gray-200"}`}>{fmt(prediction.next_candle_close, 5)}</div></div>
+            <div className="flex items-center justify-center gap-3 mt-4 pt-4 border-t border-ink-700">
+              <DirIcon size={32} className={dirColor} />
+              <span className={`text-2xl font-bold ${dirColor} uppercase`}>{prediction.direction === "wait" ? "WAIT" : prediction.direction}</span>
+            </div>
+            <div className="flex items-center justify-center gap-6 mt-2 text-sm">
+              <span className="text-ok">{bullCount} tools confirm BUY</span>
+              <span className="text-muted">vs</span>
+              <span className="text-bad">{bearCount} tools confirm SELL</span>
             </div>
           </div>
 
@@ -135,16 +147,22 @@ export default function AITrade() {
             <div className="card text-center"><div className="label">Take Profit</div><div className="text-lg font-mono text-ok">{fmt(prediction.take_profit, 5)}</div></div>
           </div>
 
+          {/* Evidence from each tool */}
+          <div className="card">
+            <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><BarChart3 size={15} className="text-accent" /> Tool Readings (Evidence)</h3>
+            <div className="space-y-1">
+              {prediction.evidence.map((e, i) => <EvidenceRow key={i} evidence={e} />)}
+            </div>
+          </div>
+
           {/* Recent candles */}
           {prediction.recent_candles && prediction.recent_candles.length > 0 && (
             <div className="card">
-              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><CandlestickChart size={15} className="text-accent" /> Last {prediction.recent_candles.length} Candles (what just happened)</h3>
+              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><Activity size={15} className="text-accent" /> Last {prediction.recent_candles.length} Candles</h3>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead><tr className="text-left text-muted border-b border-ink-700">
-                    <th className="py-1 px-2">#</th><th className="px-2">Dir</th><th className="px-2">Open</th>
-                    <th className="px-2">High</th><th className="px-2">Low</th><th className="px-2">Close</th>
-                    <th className="px-2">Body</th><th className="px-2">Pattern</th>
+                    <th className="py-1 px-2">#</th><th className="px-2">Dir</th><th className="px-2">Open</th><th className="px-2">High</th><th className="px-2">Low</th><th className="px-2">Close</th><th className="px-2">Body</th><th className="px-2">Pattern</th>
                   </tr></thead>
                   <tbody>
                     {prediction.recent_candles.map((c, i) => (
@@ -168,13 +186,13 @@ export default function AITrade() {
           {/* Upper timeframe context */}
           {prediction.upper_timeframe_context && prediction.upper_timeframe_context.length > 0 && (
             <div className="card">
-              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><Layers size={15} className="text-accent" /> Upper Timeframe Context (macro)</h3>
+              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><Layers size={15} className="text-accent" /> Upper Timeframe State</h3>
               <div className="space-y-2">
                 {prediction.upper_timeframe_context.map((u, i) => (
                   <div key={i} className="flex items-center gap-3 bg-ink-900 rounded px-3 py-2">
                     <span className="font-bold text-white text-sm w-12">{u.label}</span>
-                    <span className={u.trend === "bullish" ? "text-ok text-sm" : u.trend === "bearish" ? "text-bad text-sm" : "text-muted text-sm"}>{u.trend}</span>
-                    <span className="text-xs text-muted">RSI {String(u.rsi)} | ADX {String(u.adx)} | {u.pattern}</span>
+                    <span className={u.trend === "bullish" ? "text-ok text-sm" : "text-bad text-sm"}>{u.trend}</span>
+                    <span className="text-xs text-muted">RSI {String(u.rsi)} | ADX {String(u.adx)}</span>
                     <span className="text-xs text-accent ml-auto">{u.summary.split("—")[1]?.trim() || ""}</span>
                   </div>
                 ))}
@@ -182,37 +200,33 @@ export default function AITrade() {
             </div>
           )}
 
-          {/* Scientific basis */}
-          {prediction.scientific_basis && (
-            <div className="card border-accent/20">
-              <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-2"><Target size={15} className="text-accent" /> Scientific Basis</h3>
-              <p className="text-sm text-gray-300">{prediction.scientific_basis}</p>
+          {/* What to watch */}
+          {prediction.what_to_watch && prediction.what_to_watch.length > 0 && (
+            <div className="card border-warn/20">
+              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><Eye size={15} className="text-warn" /> What to Watch</h3>
+              <ul className="space-y-1.5">
+                {prediction.what_to_watch.map((w, i) => (
+                  <li key={i} className="text-sm text-gray-300 flex items-start gap-2">
+                    <span className="text-warn mt-0.5">▸</span> {w}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
 
           {/* Full report */}
           <div className="card">
-            <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-2"><Activity size={15} className="text-accent" /> Full Analysis Report</h3>
+            <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-2"><Target size={15} className="text-accent" /> Full Reading Report</h3>
             <pre className="text-xs text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">{prediction.reasoning}</pre>
           </div>
 
-          {/* Evidence */}
-          {prediction.signals && prediction.signals.filter(s => s.weight > 0).length > 0 && (
-            <div className="card">
-              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><BarChart3 size={15} className="text-accent" /> Evidence ({prediction.signals.filter(s => s.weight > 0).length})</h3>
-              <div className="space-y-1">
-                {prediction.signals.filter(s => s.weight > 0).map((s, i) => <FactorRow key={i} factor={s} />)}
-              </div>
-            </div>
-          )}
-
           {/* Trade button */}
-          {prediction.direction !== "hold" ? (
+          {prediction.direction !== "wait" ? (
             <button onClick={placeTrade} disabled={trading} className={`btn w-full text-base py-3 ${prediction.direction === "buy" ? "bg-ok text-white hover:bg-ok/80" : "bg-bad text-white hover:bg-bad/80"}`}>
               {trading ? <><Loader2 size={18} className="inline mr-2 animate-spin" />Placing…</> : <><Zap size={18} className="inline mr-2" />Place {prediction.direction.toUpperCase()} Trade</>}
             </button>
           ) : (
-            <div className="card text-center text-muted py-6"><Minus size={24} className="inline mb-2" /><p>Insufficient evidence — wait for a clearer setup.</p></div>
+            <div className="card text-center text-muted py-6"><Minus size={24} className="inline mb-2" /><p>Evidence is inconclusive. WAIT for clearer signals.</p></div>
           )}
         </div>
       )}
@@ -220,20 +234,19 @@ export default function AITrade() {
   );
 }
 
-function FactorRow({ factor }: { factor: SignalFactor }) {
-  const Icon = factor.source.includes("candlestick") ? CandlestickChart : factor.source.includes("note") ? Brain : factor.source.includes("upper") ? Layers : factor.source.includes("momentum") ? Zap : BarChart3;
-  const color = factor.direction === "bullish" ? "text-ok" : factor.direction === "bearish" ? "text-bad" : "text-muted";
+function EvidenceRow({ evidence }: { evidence: Evidence }) {
+  const color = evidence.confirms === "buy" ? "text-ok" : evidence.confirms === "sell" ? "text-bad" : "text-muted";
+  const bg = evidence.confirms === "buy" ? "bg-ok/5" : evidence.confirms === "sell" ? "bg-bad/5" : "bg-ink-900";
+  const Icon = evidence.source.includes("candlestick") ? Activity : evidence.source.includes("note") ? Brain : evidence.source.includes("upper") ? Layers : BarChart3;
   return (
-    <div className="flex items-center gap-3 bg-ink-900 rounded px-3 py-2">
-      <Icon size={14} className="text-muted shrink-0" />
+    <div className={`flex items-start gap-3 rounded px-3 py-2 ${bg}`}>
+      <Icon size={14} className="text-muted shrink-0 mt-0.5" />
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-200">{factor.name}</span>
-          <span className={`badge ${factor.direction === "bullish" ? "bg-ok/20 text-ok" : factor.direction === "bearish" ? "bg-bad/20 text-bad" : "bg-ink-700 text-muted"}`}>{factor.direction}</span>
-        </div>
-        <div className="text-xs text-muted truncate">{factor.detail}</div>
+        <span className="text-sm text-gray-300">{evidence.finding}</span>
       </div>
-      <span className={`text-xs ${color} shrink-0`}>×{String(factor.weight)}</span>
+      <span className={`text-xs font-bold shrink-0 mt-0.5 ${color}`}>
+        {evidence.confirms === "buy" ? "→ BUY" : evidence.confirms === "sell" ? "→ SELL" : ""}
+      </span>
     </div>
   );
 }

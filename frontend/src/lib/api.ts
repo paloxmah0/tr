@@ -133,17 +133,20 @@ export interface CandleSummary {
   direction: string; open: number; high: number; low: number; close: number;
   body: number; upper_wick: number; lower_wick: number; pattern: string;
 }
+export interface Evidence {
+  source: string; finding: string; confirms: string; weight: number;
+}
 export interface UpperTFContext {
   label: string; trend: string; last_candle_dir: string; rsi: number; adx: number;
   pattern: string; summary: string;
 }
 export interface Prediction {
-  next_candle_direction: string; confidence: number;
-  next_candle_open: number; next_candle_high: number; next_candle_low: number; next_candle_close: number;
-  direction: string; entry_price: number; stop_loss: number; take_profit: number;
-  expiry: string; reasoning: string; signals: SignalFactor[];
+  market_state: string; direction: string; evidence_score: number;
+  entry_price: number; stop_loss: number; take_profit: number;
+  expiry: string; reasoning: string; evidence: Evidence[];
+  what_to_watch: string[];
   timeframe_secs: number; symbol: string;
-  analysis_time_utc: string; market_session: string; scientific_basis: string;
+  analysis_time_utc: string; market_session: string;
   current_candle_start: string; next_candle_start: string;
   seconds_to_next_candle: number; countdown: string;
   recent_candles: CandleSummary[];
