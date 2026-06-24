@@ -123,6 +123,7 @@ impl DerivClient {
             if auth.get("error").is_some() {
                 let msg = auth["error"]["message"].as_str().unwrap_or("authorize failed");
                 let code = auth["error"]["code"].as_str().unwrap_or("");
+                tracing::error!(token_len = token.len(), token_first4 = &token[..token.len().min(4)], error_code = code, error_msg = msg, raw_response = %auth, "deriv authorize failed");
                 self.disconnect().await;
                 let hint = match code {
                     "InputValidationFailed" => " (token may not match app_id — use app_id 1089 or your registered app_id)",

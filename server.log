@@ -1,19 +1,14 @@
-[2m2026-06-24T17:04:54.182460Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m no OANDA token — using Deriv for forex data too
-[2m2026-06-24T17:04:54.184976Z[0m [32m INFO[0m [2mtrading_backend::learning[0m[2m:[0m learning loop started
-[2m2026-06-24T17:04:54.184976Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m engine loop started [3mtick_secs[0m[2m=[0m10
-[2m2026-06-24T17:04:54.186829Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m listening on 0.0.0.0:8080
-[2m2026-06-24T17:04:54.196465Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m database migrations applied
-[2m2026-06-24T17:04:54.198065Z[0m [32m INFO[0m [2mtrading_backend::dynamic_config[0m[2m:[0m loaded persisted settings from DB
-[2m2026-06-24T17:04:54.202716Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m connecting to Deriv WebSocket [3murl[0m[2m=[0mwss://ws.derivws.com/websockets/v3?app_id=1089
-[2m2026-06-24T17:04:55.508756Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m attempting deriv authorize [3mtoken_len[0m[2m=[0m12
-[2m2026-06-24T17:04:55.794891Z[0m [33m WARN[0m [2mtrading_backend::execution[0m[2m:[0m quote failed during trade management [3merror[0m[2m=[0munauthorized: deriv authorize: The token is invalid. (token is invalid or expired — generate a new one from Deriv dashboard)
-[2m2026-06-24T17:04:55.795941Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m connecting to Deriv WebSocket [3murl[0m[2m=[0mwss://ws.derivws.com/websockets/v3?app_id=1089
-[2m2026-06-24T17:04:56.949028Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m attempting deriv authorize [3mtoken_len[0m[2m=[0m12
-[2m2026-06-24T17:04:57.213254Z[0m [33m WARN[0m [2mtrading_backend::execution[0m[2m:[0m quote failed during trade management [3merror[0m[2m=[0munauthorized: deriv authorize: The token is invalid. (token is invalid or expired — generate a new one from Deriv dashboard)
-[2m2026-06-24T17:04:57.215322Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m connecting to Deriv WebSocket [3murl[0m[2m=[0mwss://ws.derivws.com/websockets/v3?app_id=1089
-[2m2026-06-24T17:04:58.476594Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m attempting deriv authorize [3mtoken_len[0m[2m=[0m12
-[2m2026-06-24T17:04:58.764304Z[0m [33m WARN[0m [2mtrading_backend::execution[0m[2m:[0m quote failed during trade management [3merror[0m[2m=[0munauthorized: deriv authorize: The token is invalid. (token is invalid or expired — generate a new one from Deriv dashboard)
-[2m2026-06-24T17:04:58.766540Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m connecting to Deriv WebSocket [3murl[0m[2m=[0mwss://ws.derivws.com/websockets/v3?app_id=1089
-[2m2026-06-24T17:05:00.012664Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m attempting deriv authorize [3mtoken_len[0m[2m=[0m12
-[2m2026-06-24T17:05:00.338847Z[0m [33m WARN[0m [2mtrading_backend::execution[0m[2m:[0m quote failed during trade management [3merror[0m[2m=[0munauthorized: deriv authorize: The token is invalid. (token is invalid or expired — generate a new one from Deriv dashboard)
-[2m2026-06-24T17:05:00.341065Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m connecting to Deriv WebSocket [3murl[0m[2m=[0mwss://ws.derivws.com/websockets/v3?app_id=1089
+[2m2026-06-24T17:23:49.190979Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m no OANDA token — using Deriv for forex data too
+[2m2026-06-24T17:23:49.195757Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m engine loop started [3mtick_secs[0m[2m=[0m10
+[2m2026-06-24T17:23:49.196041Z[0m [32m INFO[0m [2mtrading_backend::learning[0m[2m:[0m learning loop started
+[2m2026-06-24T17:23:49.197878Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m listening on 0.0.0.0:8080
+[2m2026-06-24T17:23:49.207757Z[0m [31mERROR[0m [2mtrading_backend::engine_loop[0m[2m:[0m engine tick failed [3merror[0m[2m=[0mdatabase error: error returned from database: (code: 1) no such table: strategies
+[2m2026-06-24T17:23:49.227998Z[0m [33m WARN[0m [2mtrading_backend::learning[0m[2m:[0m learning cycle failed [3merror[0m[2m=[0mdatabase error: error returned from database: (code: 1) no such table: accounts
+[2m2026-06-24T17:23:49.253103Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m database migrations applied
+[2m2026-06-24T17:23:49.256365Z[0m [32m INFO[0m [2mtrading_backend::dynamic_config[0m[2m:[0m loaded persisted settings from DB
+[2m2026-06-24T17:23:49.259469Z[0m [32m INFO[0m [2mtrading_backend::seeder[0m[2m:[0m seeding database with demo account, strategies, and notes…
+[2m2026-06-24T17:23:49.433018Z[0m [32m INFO[0m [2mtrading_backend::seeder[0m[2m:[0m seeded: 1 account, 12 strategies, 5 notes
+[2m2026-06-24T17:23:55.685384Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m connecting to Deriv WebSocket [3murl[0m[2m=[0mwss://ws.derivws.com/websockets/v3?app_id=1089
+[2m2026-06-24T17:23:56.720294Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m attempting deriv authorize [3mtoken_len[0m[2m=[0m14
+[2m2026-06-24T17:23:56.985967Z[0m [31mERROR[0m [2mtrading_backend::market::deriv[0m[2m:[0m deriv authorize failed [3mtoken_len[0m[2m=[0m14 [3mtoken_first4[0m[2m=[0m"LPRv" [3merror_code[0m[2m=[0m"InvalidToken" [3merror_msg[0m[2m=[0m"The token is invalid." [3mraw_response[0m[2m=[0m{"echo_req":{"authorize":"<not shown>","req_id":1},"error":{"code":"InvalidToken","message":"The token is invalid."},"msg_type":"authorize","req_id":1}
+[2m2026-06-24T17:23:59.214563Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m connecting to Deriv WebSocket [3murl[0m[2m=[0mwss://ws.derivws.com/websockets/v3?app_id=1089

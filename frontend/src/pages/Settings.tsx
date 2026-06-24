@@ -14,9 +14,9 @@ const FIELDS = [
     { key: "llm_api_key", label: "API Key", placeholder: "sk-...", type: "password" },
     { key: "llm_model", label: "Model", placeholder: "gpt-4o-mini", type: "text" },
   ]},
-  { section: "Deriv (Derivative Indices + Forex)", hint: "Get your API token from: app.deriv.com → Settings → API Token. NOT from api.deriv.com dashboard. The token looks like: a1-XXXXXXXXXXXX", items: [
-    { key: "deriv_app_id", label: "App ID", placeholder: "1089 (default test)", type: "text" },
-    { key: "deriv_api_token", label: "API Token", placeholder: "a1-XXXXXXXXXXXX (from app.deriv.com)", type: "password" },
+  { section: "Deriv (Derivative Indices + Forex)", hint: "Go to: app.deriv.com → click your name (top right) → Account Settings → API Token tab → Create. The token looks like: a1-XXXXXXXXXXXXXXXXXXX (starts with 'a1-', 30+ chars). Do NOT use api.deriv.com dashboard — that's for app registration, not trading.", items: [
+    { key: "deriv_app_id", label: "App ID", placeholder: "1089 (default)", type: "text" },
+    { key: "deriv_api_token", label: "API Token", placeholder: "a1-XXXXXXXXXXXXXXXXXXX", type: "password" },
     { key: "deriv_account_id", label: "Account ID (optional)", placeholder: "CR123456 or VRTC123456", type: "text" },
   ]},
   { section: "OANDA (Forex Spot — optional)", items: [
@@ -50,6 +50,13 @@ export default function Settings() {
 
   async function save() {
     setSaving(true); setError(""); setSaved(false);
+    // Validate Deriv token format.
+    const derivToken = form["deriv_api_token"] || "";
+    if (derivToken && !derivToken.startsWith("••••") && !derivToken.startsWith("a1-")) {
+      setError("Deriv API token should start with 'a1-' and be 30+ characters. You entered: '" + derivToken + "' (length " + derivToken.length + "). Please go to app.deriv.com → Account Settings → API Token to generate the correct token.");
+      setSaving(false);
+      return;
+    }
     try {
       await api.updateSettings(form);
       setSaved(true);
