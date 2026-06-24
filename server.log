@@ -1,5 +1,12 @@
-[2m2026-06-23T23:39:24.128335Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m engine loop started [3mtick_secs[0m[2m=[0m10
-[2m2026-06-23T23:39:24.130797Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m listening on 0.0.0.0:8080
-[2m2026-06-23T23:39:24.137493Z[0m [31mERROR[0m [2mtrading_backend::engine_loop[0m[2m:[0m engine tick failed [3merror[0m[2m=[0mdatabase error: error returned from database: (code: 1) no such table: strategies
-[2m2026-06-23T23:39:24.167548Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m database migrations applied
-[2m2026-06-23T23:39:24.170835Z[0m [32m INFO[0m [2mtrading_backend::dynamic_config[0m[2m:[0m loaded persisted settings from DB
+[2m2026-06-24T16:39:45.735027Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m no OANDA token — using Deriv for forex data too
+[2m2026-06-24T16:39:45.737797Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m listening on 0.0.0.0:8080
+[2m2026-06-24T16:39:45.738433Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m engine loop started [3mtick_secs[0m[2m=[0m10
+[2m2026-06-24T16:39:45.738627Z[0m [32m INFO[0m [2mtrading_backend::learning[0m[2m:[0m learning loop started
+[2m2026-06-24T16:39:45.750773Z[0m [31mERROR[0m [2mtrading_backend::engine_loop[0m[2m:[0m engine tick failed [3merror[0m[2m=[0mdatabase error: error returned from database: (code: 1) no such table: strategies
+[2m2026-06-24T16:39:45.753510Z[0m [33m WARN[0m [2mtrading_backend::learning[0m[2m:[0m learning cycle failed [3merror[0m[2m=[0mdatabase error: error returned from database: (code: 1) no such table: accounts
+[2m2026-06-24T16:39:45.788926Z[0m [32m INFO[0m [2mtrading_backend[0m[2m:[0m database migrations applied
+[2m2026-06-24T16:39:45.791973Z[0m [32m INFO[0m [2mtrading_backend::dynamic_config[0m[2m:[0m loaded persisted settings from DB
+[2m2026-06-24T16:39:45.795370Z[0m [32m INFO[0m [2mtrading_backend::seeder[0m[2m:[0m seeding database with demo account, strategies, and notes…
+[2m2026-06-24T16:39:45.982172Z[0m [32m INFO[0m [2mtrading_backend::seeder[0m[2m:[0m seeded: 1 account, 12 strategies, 5 notes
+[2m2026-06-24T16:39:54.618320Z[0m [32m INFO[0m [2mtrading_backend::market::deriv[0m[2m:[0m connecting to Deriv WebSocket [3murl[0m[2m=[0mwss://ws.derivws.com/websockets/v3?app_id=1089
+[2m2026-06-24T16:39:57.121484Z[0m [32m INFO[0m [2mtrading_backend::engine_loop[0m[2m:[0m signal [3mstrategy[0m[2m=[0mRSI Oversold Reversal [3msymbol[0m[2m=[0mfrxEURUSD [3mstrength[0m[2m=[0m0.333333

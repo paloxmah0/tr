@@ -68,7 +68,7 @@ pub async fn place_trade(
         Side::Sell => (entry + sl_dist, entry - tp_dist),
     };
 
-    let stake = req.stake.unwrap_or(account.balance * Decimal::new(2, 2)); // 2% default
+    let stake = req.stake.unwrap_or(account.balance * Decimal::new(1, 2)); // 1% default
     let tf_secs = req.timeframe_minutes * 60;
 
     // ═══ LIVE MODE: route through the broker ═══

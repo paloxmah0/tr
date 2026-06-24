@@ -554,12 +554,14 @@ pub async fn analyze(
     let market_state = determine_market_state(&ind);
 
     // 6. Derive trade bias from the weight of evidence.
+    // Bold: commit when evidence is clear (>50%), not cautious (55%).
     let total = bull + bear;
     let (direction, evidence_score): (String, Decimal) = if total == Decimal::ZERO {
         ("wait".into(), Decimal::ZERO)
     } else {
         let ratio = if bull > bear { bull / total } else { bear / total };
-        if ratio < Decimal::new(55, 2) {
+        if ratio < Decimal::new(50, 2) {
+            // Exactly 50/50 — too balanced to commit.
             ("wait".into(), ratio)
         } else if bull > bear {
             ("buy".into(), ratio)
