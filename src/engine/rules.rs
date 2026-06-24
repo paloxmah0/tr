@@ -25,6 +25,18 @@ pub struct Indicators {
     pub prev_close: Decimal,
     pub prev_high: Decimal,
     pub prev_low: Decimal,
+    /// Bollinger Bands (SMA20 ± 2σ).
+    pub bb_upper: Decimal,
+    pub bb_middle: Decimal,
+    pub bb_lower: Decimal,
+    /// Stochastic Oscillator (%K, %D).
+    pub stoch_k: Decimal,
+    pub stoch_d: Decimal,
+    /// ADX — trend strength (0-100). >25 = strong trend.
+    pub adx: Decimal,
+    /// Recent swing high/low (support/resistance).
+    pub swing_high: Decimal,
+    pub swing_low: Decimal,
 }
 
 impl Indicators {
@@ -67,6 +79,26 @@ impl Indicators {
 
         // Compute candlestick patterns.
         ind.patterns = detect_patterns(candles);
+
+        // Bollinger Bands (SMA20 ± 2 standard deviations).
+        let (bb_upper, bb_middle, bb_lower) = bollinger_bands(&closes, 20);
+        ind.bb_upper = bb_upper;
+        ind.bb_middle = bb_middle;
+        ind.bb_lower = bb_lower;
+
+        // Stochastic Oscillator (%K, %D).
+        let (k, d) = stochastic(candles, 14, 3);
+        ind.stoch_k = k;
+        ind.stoch_d = d;
+
+        // ADX — trend strength.
+        ind.adx = adx(candles, 14);
+
+        // Support/Resistance — recent swing high/low (last 20 candles).
+        let lookback = candles.len().min(20);
+        ind.swing_high = candles[candles.len() - lookback..].iter().map(|c| c.high).fold(Decimal::ZERO, Decimal::max);
+        ind.swing_low = candles[candles.len() - lookback..].iter().map(|c| c.low).fold(Decimal::MAX, Decimal::min);
+
         Ok(ind)
     }
 
@@ -143,6 +175,107 @@ fn macd(closes: &[Decimal]) -> Decimal {
     let fast = ema(closes, 12).unwrap_or(Decimal::ZERO);
     let slow = ema(closes, 26).unwrap_or(Decimal::ZERO);
     (fast - slow).round_dp(10)
+}
+
+/// Bollinger Bands: SMA(period) ± 2 * standard deviation.
+fn bollinger_bands(closes: &[Decimal], period: usize) -> (Decimal, Decimal, Decimal) {
+    if closes.len() < period {
+        let last = closes.last().copied().unwrap_or(Decimal::ZERO);
+        return (last, last, last);
+    }
+    let slice = &closes[closes.len() - period..];
+    let n = Decimal::from(period);
+    let mean = (slice.iter().sum::<Decimal>() / n).round_dp(10);
+    let var = (slice.iter().map(|p| {
+        let d = *p - mean;
+        (d * d).round_dp(10)
+    }).sum::<Decimal>() / n).round_dp(10);
+    let std_f64 = var.to_string().parse::<f64>().unwrap_or(0.0).sqrt();
+    let std = Decimal::try_from(std_f64).unwrap_or(Decimal::ZERO).round_dp(10);
+    let two = Decimal::from(2);
+    (mean + two * std, mean, mean - two * std)
+}
+
+/// Stochastic Oscillator: %K = (close - lowest_low) / (highest_high - lowest_low) * 100.
+/// %D = SMA(3) of %K.
+fn stochastic(candles: &[Candle], period: usize, d_period: usize) -> (Decimal, Decimal) {
+    if candles.len() < period + d_period {
+        return (Decimal::from(50), Decimal::from(50));
+    }
+    let mut ks: Vec<Decimal> = Vec::new();
+    for i in (period..=candles.len()).rev() {
+        let window = &candles[i - period..i];
+        let highest = window.iter().map(|c| c.high).fold(Decimal::ZERO, Decimal::max);
+        let lowest = window.iter().map(|c| c.low).fold(Decimal::MAX, Decimal::min);
+        let close = candles[i - 1].close;
+        let range = highest - lowest;
+        let k = if range != Decimal::ZERO {
+            ((close - lowest) / range * Decimal::from(100)).round_dp(4)
+        } else {
+            Decimal::from(50)
+        };
+        ks.push(k);
+    }
+    let k = ks.first().copied().unwrap_or(Decimal::from(50));
+    let d = (ks.iter().take(d_period).sum::<Decimal>() / Decimal::from(d_period.min(ks.len()))).round_dp(4);
+    (k, d)
+}
+
+/// ADX (Average Directional Index) — measures trend strength, not direction.
+/// >25 = strong trend, <20 = weak/no trend.
+fn adx(candles: &[Candle], period: usize) -> Decimal {
+    if candles.len() < period * 2 + 1 {
+        return Decimal::ZERO;
+    }
+    let mut plus_dms: Vec<Decimal> = Vec::new();
+    let mut minus_dms: Vec<Decimal> = Vec::new();
+    let mut trs: Vec<Decimal> = Vec::new();
+
+    for i in 1..candles.len() {
+        let up_move = candles[i].high - candles[i - 1].high;
+        let down_move = candles[i - 1].low - candles[i].low;
+        let plus_dm = if up_move > down_move && up_move > Decimal::ZERO { up_move } else { Decimal::ZERO };
+        let minus_dm = if down_move > up_move && down_move > Decimal::ZERO { down_move } else { Decimal::ZERO };
+        let tr = (candles[i].high - candles[i].low)
+            .max((candles[i].high - candles[i - 1].close).abs())
+            .max((candles[i].low - candles[i - 1].close).abs());
+        plus_dms.push(plus_dm);
+        minus_dms.push(minus_dm);
+        trs.push(tr);
+    }
+
+    if trs.len() < period {
+        return Decimal::ZERO;
+    }
+
+    // Wilder's smoothing.
+    let n = Decimal::from(period);
+    let mut atr_sum = trs[..period].iter().sum::<Decimal>();
+    let mut plus_dm_sum = plus_dms[..period].iter().sum::<Decimal>();
+    let mut minus_dm_sum = minus_dms[..period].iter().sum::<Decimal>();
+
+    let mut dxs: Vec<Decimal> = Vec::new();
+    for i in period..trs.len() {
+        let atr = (atr_sum / n).round_dp(10);
+        if atr != Decimal::ZERO {
+            let plus_di = (plus_dm_sum / n * Decimal::from(100) / atr).round_dp(4);
+            let minus_di = (minus_dm_sum / n * Decimal::from(100) / atr).round_dp(4);
+            let di_sum = plus_di + minus_di;
+            let dx = if di_sum != Decimal::ZERO {
+                ((plus_di - minus_di).abs() / di_sum * Decimal::from(100)).round_dp(4)
+            } else { Decimal::ZERO };
+            dxs.push(dx);
+        }
+        atr_sum = atr_sum - atr_sum / n + trs[i];
+        plus_dm_sum = plus_dm_sum - plus_dm_sum / n + plus_dms[i];
+        minus_dm_sum = minus_dm_sum - minus_dm_sum / n + minus_dms[i];
+    }
+
+    if dxs.is_empty() {
+        return Decimal::ZERO;
+    }
+    let take = dxs.len().min(period);
+    (dxs[dxs.len() - take..].iter().sum::<Decimal>() / Decimal::from(take)).round_dp(2)
 }
 
 // ---- Candlestick pattern detection ----
