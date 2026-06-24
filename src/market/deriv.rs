@@ -138,6 +138,30 @@ impl DerivClient {
         *self.authorized.lock().await = false;
     }
 
+    /// Test the connection: authorize with the configured token and return
+    /// account info if successful.
+    pub async fn test_connection(&self) -> AppResult<String> {
+        self.ensure_connected().await?;
+        let token = self.token().await;
+        if token.is_empty() {
+            return Ok("Connected (anonymous — market data only, no trading)".into());
+        }
+        // Request balance to verify the token works.
+        let resp = self.request(serde_json::json!({ "balance": 1 })).await?;
+        if let Some(err) = resp.get("error") {
+            return Err(AppError::Market(format!("{}", err["message"].as_str().unwrap_or("unknown"))));
+        }
+        let balance = resp.get("balance")
+            .and_then(|b| b.get("balance"))
+            .and_then(|b| b.as_str())
+            .unwrap_or("unknown");
+        let currency = resp.get("balance")
+            .and_then(|b| b.get("currency"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("USD");
+        Ok(format!("Connected! Balance: {} {}", balance, currency))
+    }
+
     /// Send a JSON request and await the matching response (by req_id).
     pub async fn request(&self, msg: serde_json::Value) -> AppResult<serde_json::Value> {
         self.ensure_connected().await?;

@@ -88,8 +88,19 @@ pub async fn test(
         }
         "deriv" => {
             let token = state.config.get(keys::DERIV_API_TOKEN).await;
-            if token.is_empty() { (true, "Anonymous mode (market data only). Set token for live trading.".into()) }
-            else { (true, "Deriv token configured".into()) }
+            if token.is_empty() {
+                (true, "Anonymous mode (market data only). Set token for live trading.".into())
+            } else {
+                // Actually test the token by trying to authorize.
+                let deriv_client = crate::market::DerivClient::new(
+                    state.config.shared(),
+                    state.settings.deriv_granularity_secs,
+                );
+                match deriv_client.test_connection().await {
+                    Ok(msg) => (true, msg),
+                    Err(e) => (false, format!("Token test failed: {}", e)),
+                }
+            }
         }
         "oanda" => {
             let token = state.config.get(keys::OANDA_API_TOKEN).await;

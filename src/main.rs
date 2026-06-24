@@ -12,6 +12,7 @@ mod error;
 mod execution;
 mod ingest;
 mod insights;
+mod learning;
 mod llm;
 mod market;
 mod seeder;
@@ -125,6 +126,13 @@ async fn main() -> anyhow::Result<()> {
         let markets = markets.clone();
         let tick = settings.engine_tick_secs;
         tokio::spawn(async move { engine_loop::run(db, markets, tick).await });
+    }
+
+    // Background learning loop — analyzes closed trades and learns what works.
+    {
+        let db = db.clone();
+        let scores = std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        tokio::spawn(async move { learning::run(db, scores).await });
     }
 
     let app = api::router(state);
