@@ -58,6 +58,14 @@ pub struct Indicators {
     pub candle_sequence: Vec<String>,
     /// Rate of change (5-bar momentum).
     pub roc_5: Decimal,
+    /// RSI divergence vs price over recent window: "bullish", "bearish", or "none".
+    /// Bullish = price lower low, RSI higher low (reversal up).
+    /// Bearish = price higher high, RSI lower high (reversal down).
+    pub rsi_divergence: String,
+    /// MACD divergence vs price: "bullish", "bearish", or "none".
+    pub macd_divergence: String,
+    /// Average volume over the lookback vs last bar volume (ratio > 1.5 = spike).
+    pub volume_ratio: Decimal,
 }
 
 impl Indicators {
@@ -181,6 +189,24 @@ impl Indicators {
             if past != Decimal::ZERO {
                 ind.roc_5 = ((last.close - past) / past * Decimal::from(100)).round_dp(4);
             }
+        }
+
+        // RSI / MACD divergence vs price (lookback ~30 bars).
+        let (rsi_div, macd_div) = detect_divergence(&candles);
+        ind.rsi_divergence = rsi_div;
+        ind.macd_divergence = macd_div;
+
+        // Volume ratio: last bar volume vs average of prior 20 bars.
+        let vol_lookback = candles.len().min(21);
+        if vol_lookback > 1 {
+            let prior_sum: Decimal = candles[candles.len() - vol_lookback..candles.len() - 1]
+                .iter().map(|c| c.volume).sum();
+            let avg = prior_sum / Decimal::from(vol_lookback - 1);
+            ind.volume_ratio = if avg > Decimal::ZERO {
+                (last.volume / avg).round_dp(4)
+            } else { Decimal::ONE };
+        } else {
+            ind.volume_ratio = Decimal::ONE;
         }
 
         Ok(ind)
@@ -362,9 +388,17 @@ fn adx(candles: &[Candle], period: usize) -> Decimal {
     (dxs[dxs.len() - take..].iter().sum::<Decimal>() / Decimal::from(take)).round_dp(2)
 }
 
-// ---- Candlestick pattern detection ----
-// Based on classic Japanese candlestick analysis. Each pattern returns 1.0
-// (present) or 0.0 (absent). Patterns use the last 1-3 candles.
+// ---- Enhanced Candlestick Pattern Detection ----
+// Strong reading: each pattern is context-aware (trend, volatility, position)
+// and reports a STRENGTH value (0.0 to 1.0), not just binary present/absent.
+//
+// Enhancements over basic detection:
+// 1. Candle body size relative to ATR (big body = conviction, tiny body = noise)
+// 2. Wick rejection strength (how hard did buyers/sellers reject a level?)
+// 3. Trend context (hammer in downtrend = strong, hammer in uptrend = weak)
+// 4. Multi-candle momentum sequences (3+ bars same direction = exhaustion)
+// 5. Failed breakout detection (price broke a level then closed back = trap)
+// 6. Inside bar / narrowing range (compression before breakout)
 
 fn detect_patterns(candles: &[Candle]) -> HashMap<String, Decimal> {
     let mut p = HashMap::new();
@@ -377,7 +411,18 @@ fn detect_patterns(candles: &[Candle]) -> HashMap<String, Decimal> {
     let lower_shadow = ((o.min(cl) - l).abs()).round_dp(10);
     let two = Decimal::from(2);
 
-    // Guard against zero range.
+    // Compute ATR for body-strength comparison (big body vs average = conviction).
+    let atr_val = atr(candles, 14).unwrap_or(range);
+    let body_vs_atr = if atr_val > Decimal::ZERO { body / atr_val } else { Decimal::ONE };
+
+    // Determine recent trend (last 10 candles) for context.
+    let trend = if candles.len() >= 10 {
+        let recent = &candles[candles.len() - 10..];
+        let starts = recent[0].close;
+        let ends = recent.last().unwrap().close;
+        if ends > starts { "up" } else if ends < starts { "down" } else { "flat" }
+    } else { "flat" };
+
     if range == Decimal::ZERO {
         p.insert("doji".into(), Decimal::ONE);
         return p;
@@ -386,66 +431,108 @@ fn detect_patterns(candles: &[Candle]) -> HashMap<String, Decimal> {
     let body_pct = (body / range).round_dp(6);
     let upper_pct = (upper_shadow / range).round_dp(6);
     let lower_pct = (lower_shadow / range).round_dp(6);
+    let is_bull = cl > o;
+    let is_bear = cl < o;
 
-    // Hammer: long lower shadow (2x+ body), small upper shadow.
-    let is_hammer = lower_shadow >= body * two && upper_shadow <= body * Decimal::new(1, 1) && body > Decimal::ZERO;
-    p.insert("hammer".into(), bool_dec(is_hammer));
+    // ─── Single-candle patterns with STRENGTH scoring ───
 
-    // Inverted Hammer: long upper shadow, small lower shadow.
-    let is_inv_hammer = upper_shadow >= body * two && lower_shadow <= body * Decimal::new(1, 1) && body > Decimal::ZERO;
-    p.insert("inverted_hammer".into(), bool_dec(is_inv_hammer));
+    // Hammer / Hanging Man: long lower wick (buyers rejected lows).
+    // STRONG if: in a downtrend (reversal), body is small, lower wick >= 2x body.
+    // Strength boosted by wick-to-body ratio and downtrend context.
+    if lower_shadow >= body * two && upper_shadow <= body * Decimal::new(1, 1) && body > Decimal::ZERO {
+        let wick_ratio = if body > Decimal::ZERO { lower_shadow / body } else { Decimal::ZERO };
+        let trend_boost = if trend == "down" { Decimal::new(15, 1) } else { Decimal::ZERO };
+        let strength = (Decimal::new(5, 1) + wick_ratio * Decimal::new(2, 1) + trend_boost).min(Decimal::ONE);
+        p.insert("hammer".into(), Decimal::ONE); // present flag
+        p.insert("hammer_strength".into(), strength);
+    }
+    p.insert("hammer".into(), p.get("hammer").copied().unwrap_or(Decimal::ZERO));
 
-    // Doji: body is tiny (<=5% of range).
+    // Inverted Hammer / Shooting Star: long upper wick.
+    // BULLISH if in a downtrend (inverted hammer = buyers tried to push up).
+    // BEARISH if in an uptrend (shooting star = sellers rejected highs).
+    if upper_shadow >= body * two && lower_shadow <= body * Decimal::new(1, 1) && body > Decimal::ZERO {
+        if trend == "down" {
+            p.insert("inverted_hammer".into(), Decimal::ONE);
+        } else if trend == "up" {
+            let wick_ratio = if body > Decimal::ZERO { upper_shadow / body } else { Decimal::ZERO };
+            p.insert("shooting_star".into(), Decimal::ONE);
+            p.insert("shooting_star_strength".into(), (Decimal::new(5, 1) + wick_ratio * Decimal::new(2, 1)).min(Decimal::ONE));
+        }
+    }
+
+    // Doji: body <= 5% of range. Strength = how small the body is.
     let is_doji = body_pct <= Decimal::new(5, 2);
     p.insert("doji".into(), bool_dec(is_doji));
 
-    // Dragonfly Doji: doji with long lower shadow (60%+ of range).
-    let is_dragonfly = is_doji && lower_pct >= Decimal::new(60, 2);
-    p.insert("dragonfly_doji".into(), bool_dec(is_dragonfly));
+    // Dragonfly Doji: doji with long lower wick (strong bullish rejection at bottom).
+    if is_doji && lower_pct >= Decimal::new(60, 2) && trend == "down" {
+        p.insert("dragonfly_doji".into(), Decimal::ONE);
+        p.insert("dragonfly_strength".into(), lower_pct / Decimal::from(100));
+    }
 
-    // Gravestone Doji: doji with long upper shadow.
-    let is_gravestone = is_doji && upper_pct >= Decimal::new(60, 2);
-    p.insert("gravestone_doji".into(), bool_dec(is_gravestone));
+    // Gravestone Doji: doji with long upper wick (strong bearish rejection at top).
+    if is_doji && upper_pct >= Decimal::new(60, 2) && trend == "up" {
+        p.insert("gravestone_doji".into(), Decimal::ONE);
+        p.insert("gravestone_strength".into(), upper_pct / Decimal::from(100));
+    }
 
-    // Bullish/Bearish candle.
-    p.insert("bullish_candle".into(), bool_dec(cl > o));
-    p.insert("bearish_candle".into(), bool_dec(cl < o));
+    // Bullish/Bearish candle — only flagged as significant if body > 0.5 ATR (conviction).
+    p.insert("bullish_candle".into(), bool_dec(is_bull && body_vs_atr > Decimal::new(5, 1)));
+    p.insert("bearish_candle".into(), bool_dec(is_bear && body_vs_atr > Decimal::new(5, 1)));
+    p.insert("weak_bullish".into(), bool_dec(is_bull && body_vs_atr <= Decimal::new(5, 1)));
+    p.insert("weak_bearish".into(), bool_dec(is_bear && body_vs_atr <= Decimal::new(5, 1)));
 
-    // Marubozu: body fills 95%+ of range.
-    let is_marubozu = body_pct >= Decimal::new(95, 2);
+    // Marubozu (full-body candle = maximum conviction). Strength = body% of range.
+    let is_marubozu = body_pct >= Decimal::new(90, 2);
     p.insert("marubozu".into(), bool_dec(is_marubozu));
+    if is_marubozu {
+        p.insert("marubozu_strength".into(), body_pct);
+        p.insert(if is_bull { "marubozu_bull".into() } else { "marubozu_bear".into() }, Decimal::ONE);
+    }
 
-    // Spinning Top: small body (<=30%), long shadows both sides.
+    // Spinning Top: small body + long wicks both sides = indecision.
     let is_spinning_top = body_pct <= Decimal::new(30, 2) && upper_shadow > body && lower_shadow > body;
     p.insert("spinning_top".into(), bool_dec(is_spinning_top));
 
-    // Shooting Star: long upper shadow (2x+ body), small lower shadow.
-    let is_shooting_star = upper_shadow >= body * two && lower_shadow <= body * Decimal::new(1, 1) && body > Decimal::ZERO;
-    p.insert("shooting_star".into(), bool_dec(is_shooting_star));
+    // Hanging Man: hammer shape but in an UPTREND (bearish, not bullish).
+    if lower_shadow >= body * two && trend == "up" && body > Decimal::ZERO {
+        p.insert("hanging_man".into(), Decimal::ONE);
+    }
 
-    p.insert("hanging_man".into(), bool_dec(is_hammer));
-
-    // Long shadows (2/3+ of range).
+    // Long shadow rejections (strength = wick % of range).
     p.insert("long_upper_shadow".into(), bool_dec(upper_pct >= Decimal::new(66, 2)));
     p.insert("long_lower_shadow".into(), bool_dec(lower_pct >= Decimal::new(66, 2)));
 
-    // Two-candle patterns.
+    // ─── Two-candle patterns (engulfing, harami, piercing, dark cloud) ───
     if candles.len() >= 2 {
         let prev = &candles[candles.len() - 2];
         let po = prev.open; let pc = prev.close; let ph = prev.high; let pl = prev.low;
         let prev_bullish = pc > po;
         let prev_bearish = pc < po;
+        let prev_body = ((pc - po).abs()).round_dp(10);
+        let prev_range = ((ph - pl).abs()).round_dp(10);
 
-        // Bullish Engulfing: prev bearish, curr bullish, curr engulfs prev body.
+        // Bullish Engulfing: STRONG if prev body is large (real selling) and
+        // current body engulfs it completely (buyers overwhelmed sellers).
         let is_bull_engulf = prev_bearish && cl > o && o <= pc && cl >= po;
         p.insert("bullish_engulfing".into(), bool_dec(is_bull_engulf));
+        if is_bull_engulf {
+            // Strength: how much bigger is the engulfing body vs the prev body?
+            let dominance = if prev_body > Decimal::ZERO { body / prev_body } else { Decimal::ONE };
+            p.insert("bullish_engulfing_strength".into(), dominance.min(Decimal::from(2)) / Decimal::from(2));
+        }
 
-        // Bearish Engulfing: prev bullish, curr bearish, curr engulfs prev body.
+        // Bearish Engulfing: STRONG if prev body is large (real buying) and
+        // current body engulfs it (sellers overwhelmed buyers).
         let is_bear_engulf = prev_bullish && cl < o && o >= pc && cl <= po;
         p.insert("bearish_engulfing".into(), bool_dec(is_bear_engulf));
+        if is_bear_engulf {
+            let dominance = if prev_body > Decimal::ZERO { body / prev_body } else { Decimal::ONE };
+            p.insert("bearish_engulfing_strength".into(), dominance.min(Decimal::from(2)) / Decimal::from(2));
+        }
 
         // Bullish Harami: prev big bearish, curr small bullish inside prev.
-        let prev_body = ((pc - po).abs()).round_dp(10);
         let is_bull_harami = prev_bearish && prev_body > body * two && cl > o && o >= pc && cl <= po;
         p.insert("bullish_harami".into(), bool_dec(is_bull_harami));
 
@@ -457,17 +544,46 @@ fn detect_patterns(candles: &[Candle]) -> HashMap<String, Decimal> {
         let prev_mid = ((po + pc) / two).round_dp(10);
         let is_piercing = prev_bearish && o < pl && cl > prev_mid && cl < po;
         p.insert("piercing_line".into(), bool_dec(is_piercing));
+        if is_piercing {
+            // Strength: how far past the midpoint did it close?
+            let penetration = if po != prev_mid { (cl - prev_mid) / (po - prev_mid).abs() } else { Decimal::ZERO };
+            p.insert("piercing_strength".into(), penetration.min(Decimal::ONE));
+        }
 
         // Dark Cloud Cover: prev bullish, curr opens above prev high, closes below midpoint.
         let is_dark_cloud = prev_bullish && o > ph && cl < prev_mid && cl > po;
         p.insert("dark_cloud_cover".into(), bool_dec(is_dark_cloud));
 
-        // Tweezer Bottom/Top: matching lows/highs (within 1% of range).
-        p.insert("tweezer_bottom".into(), bool_dec(((l - pl).abs() <= range * Decimal::new(1, 2))));
-        p.insert("tweezer_top".into(), bool_dec(((h - ph).abs() <= range * Decimal::new(1, 2))));
+        // Tweezer Bottom/Top: matching lows/highs (within 0.5% of range = very tight).
+        let tweezer_tol = range * Decimal::new(5, 3); // 0.5%
+        p.insert("tweezer_bottom".into(), bool_dec(((l - pl).abs() <= tweezer_tol)));
+        p.insert("tweezer_top".into(), bool_dec(((h - ph).abs() <= tweezer_tol)));
+
+        // ─── Inside Bar: current candle is completely inside the previous candle's range. ───
+        // This is a compression pattern — breakout direction tells you the next move.
+        let is_inside = h < ph && l > pl;
+        p.insert("inside_bar".into(), bool_dec(is_inside));
+
+        // ─── Failed Breakout (Bull Trap): price broke above prev high then closed back below. ───
+        // STRONG bearish signal — buyers tried to break out, sellers rejected them.
+        let bull_trap = h > ph && cl < ph && is_bear;
+        p.insert("failed_breakout_up".into(), bool_dec(bull_trap));
+        if bull_trap {
+            let rejection = (h - cl) / range; // how far it fell back from the high
+            p.insert("failed_breakout_up_strength".into(), rejection);
+        }
+
+        // ─── Failed Breakout (Bear Trap): price broke below prev low then closed back above. ───
+        // STRONG bullish signal — sellers tried to break down, buyers rejected them.
+        let bear_trap = l < pl && cl > pl && is_bull;
+        p.insert("failed_breakout_down".into(), bool_dec(bear_trap));
+        if bear_trap {
+            let rejection = (cl - l) / range;
+            p.insert("failed_breakout_down_strength".into(), rejection);
+        }
     }
 
-    // Three-candle patterns.
+    // ─── Three-candle patterns ───
     if candles.len() >= 3 {
         let prev2 = &candles[candles.len() - 3];
         let prev = &candles[candles.len() - 2];
@@ -475,24 +591,216 @@ fn detect_patterns(candles: &[Candle]) -> HashMap<String, Decimal> {
         let po = prev.open; let pc = prev.close;
 
         // Morning Star: bearish → small body → bullish closing into first body.
-        let prev_mid = ((po2 + pc2) / two).round_dp(10);
-        let is_morning_star = pc2 < po2 && (pc - po).abs() < (pc2 - po2).abs() * Decimal::new(5, 10) && cl > o && cl > prev_mid;
+        let prev_mid2 = ((po2 + pc2) / two).round_dp(10);
+        let is_morning_star = pc2 < po2 && (pc - po).abs() < (pc2 - po2).abs() * Decimal::new(5, 10) && cl > o && cl > prev_mid2;
         p.insert("morning_star".into(), bool_dec(is_morning_star));
+        if is_morning_star {
+            // Strength: how far the third candle closes into the first candle's body.
+            let penetration = if po2 != prev_mid2 { (cl - prev_mid2) / (po2 - prev_mid2).abs() } else { Decimal::ZERO };
+            p.insert("morning_star_strength".into(), penetration.min(Decimal::ONE));
+        }
 
         // Evening Star: bullish → small body → bearish closing into first body.
-        let is_evening_star = pc2 > po2 && (pc - po).abs() < (pc2 - po2).abs() * Decimal::new(5, 10) && cl < o && cl < prev_mid;
+        let is_evening_star = pc2 > po2 && (pc - po).abs() < (pc2 - po2).abs() * Decimal::new(5, 10) && cl < o && cl < prev_mid2;
         p.insert("evening_star".into(), bool_dec(is_evening_star));
+        if is_evening_star {
+            let penetration = if pc2 != prev_mid2 { (prev_mid2 - cl) / (pc2 - prev_mid2).abs() } else { Decimal::ZERO };
+            p.insert("evening_star_strength".into(), penetration.min(Decimal::ONE));
+        }
 
-        // Three White Soldiers.
+        // Three White Soldiers: three bullish candles with rising closes. STRONG in a downtrend.
         let is_three_soldiers = pc2 > po2 && pc > po && cl > o && pc > pc2 && cl > pc;
         p.insert("three_white_soldiers".into(), bool_dec(is_three_soldiers));
+        if is_three_soldiers && trend == "down" {
+            p.insert("three_soldiers_reversal".into(), Decimal::ONE); // extra flag: reversal context
+        }
 
-        // Three Black Crows.
+        // Three Black Crows: three bearish candles with falling closes. STRONG in an uptrend.
         let is_three_crows = pc2 < po2 && pc < po && cl < o && pc < pc2 && cl < pc;
         p.insert("three_black_crows".into(), bool_dec(is_three_crows));
+        if is_three_crows && trend == "up" {
+            p.insert("three_crows_reversal".into(), Decimal::ONE);
+        }
+
+        // ─── Three-bar reversal: strong 3-bar pattern where the third candle
+        // engulfs or strongly reverses the prior two. High conviction.
+        let three_bar_bull = pc2 < po2 && pc < po && cl > o && cl > po2; // 2 bearish then bullish breaking above first
+        p.insert("three_bar_bull_reversal".into(), bool_dec(three_bar_bull));
+        let three_bar_bear = pc2 > po2 && pc > po && cl < o && cl < po2;
+        p.insert("three_bar_bear_reversal".into(), bool_dec(three_bar_bear));
+    }
+
+    // ─── Four-candle momentum / exhaustion sequences ───
+    if candles.len() >= 4 {
+        let last4 = &candles[candles.len() - 4..];
+        let all_bull = last4.iter().all(|c| c.close > c.open);
+        let all_bear = last4.iter().all(|c| c.close < c.open);
+        // 4+ same-direction candles = exhaustion (reversal probability rises).
+        if all_bull { p.insert("four_bull_exhaustion".into(), Decimal::ONE); }
+        if all_bear { p.insert("four_bear_exhaustion".into(), Decimal::ONE); }
+    }
+
+    // ─── Five-candle patterns ───
+    if candles.len() >= 5 {
+        let last5 = &candles[candles.len() - 5..];
+        let all_bull5 = last5.iter().all(|c| c.close > c.open);
+        let all_bear5 = last5.iter().all(|c| c.close < c.open);
+        if all_bull5 { p.insert("five_bull_exhaustion".into(), Decimal::ONE); }
+        if all_bear5 { p.insert("five_bear_exhaustion".into(), Decimal::ONE); }
+
+        // ─── Narrowing range (compression): each candle's range is smaller than the last.
+        // Strong breakout predictor — energy is building.
+        let ranges: Vec<Decimal> = last5.iter().map(|c| (c.high - c.low).abs()).collect();
+        let narrowing = ranges.windows(2).all(|w| w[1] < w[0]);
+        if narrowing { p.insert("narrowing_range".into(), Decimal::ONE); }
+
+        // ─── Expanding range (volatility explosion): each candle's range is bigger.
+        let expanding = ranges.windows(2).all(|w| w[1] > w[0]);
+        if expanding { p.insert("expanding_range".into(), Decimal::ONE); }
+    }
+
+    // ─── CHART PATTERNS (multi-bar structural patterns) ───
+    // These are the highest-probability patterns in technical analysis.
+    // They use 10-20 bars of structure, not just 2-3 candles.
+    if candles.len() >= 20 {
+        let lookback = 20.min(candles.len());
+        let window = &candles[candles.len() - lookback..];
+
+        // Find the two highest highs and two lowest lows in the window.
+        let mut highs: Vec<(usize, Decimal)> = window.iter().enumerate().map(|(i, c)| (i, c.high)).collect();
+        let mut lows: Vec<(usize, Decimal)> = window.iter().enumerate().map(|(i, c)| (i, c.low)).collect();
+        highs.sort_by(|a, b| b.1.cmp(&a.1));
+        lows.sort_by(|a, b| a.1.cmp(&b.1));
+
+        let atr_val = atr(candles, 14).unwrap_or(Decimal::ZERO);
+        let tolerance = atr_val * Decimal::new(5, 1); // 0.5x ATR
+
+        // ─── Double Top: two highs at similar levels with a dip between ───
+        // Bearish reversal — price failed to break higher twice.
+        if highs.len() >= 2 {
+            let (h1_idx, h1) = highs[0];
+            let (h2_idx, h2) = highs[1];
+            let idx_diff = (h1_idx as i64 - h2_idx as i64).unsigned_abs();
+            if idx_diff >= 3 && (h1 - h2).abs() <= tolerance {
+                // Confirm there's a dip between them (the "valley")
+                let valley_low = window[h1_idx.min(h2_idx)..h1_idx.max(h2_idx)]
+                    .iter().map(|c| c.low).fold(Decimal::MAX, Decimal::min);
+                if h1 - valley_low > tolerance {
+                    p.insert("double_top".into(), Decimal::ONE);
+                }
+            }
+        }
+
+        // ─── Double Bottom: two lows at similar levels with a bump between ───
+        // Bullish reversal — price failed to break lower twice.
+        if lows.len() >= 2 {
+            let (l1_idx, l1) = lows[0];
+            let (l2_idx, l2) = lows[1];
+            let idx_diff = (l1_idx as i64 - l2_idx as i64).unsigned_abs();
+            if idx_diff >= 3 && (l1 - l2).abs() <= tolerance {
+                let valley_high = window[l1_idx.min(l2_idx)..l1_idx.max(l2_idx)]
+                    .iter().map(|c| c.high).fold(Decimal::ZERO, Decimal::max);
+                if valley_high - l1 > tolerance {
+                    p.insert("double_bottom".into(), Decimal::ONE);
+                }
+            }
+        }
+
+        // ─── Higher Highs / Lower Lows sequence (trend structure) ───
+        let quarter = lookback / 4;
+        if quarter >= 3 {
+            let q1_high = window[0..quarter].iter().map(|c| c.high).fold(Decimal::ZERO, Decimal::max);
+            let q4_high = window[lookback - quarter..].iter().map(|c| c.high).fold(Decimal::ZERO, Decimal::max);
+            let q1_low = window[0..quarter].iter().map(|c| c.low).fold(Decimal::MAX, Decimal::min);
+            let q4_low = window[lookback - quarter..].iter().map(|c| c.low).fold(Decimal::MAX, Decimal::min);
+
+            if q4_high > q1_high && q4_low > q1_low {
+                p.insert("uptrend_structure".into(), Decimal::ONE);
+            } else if q4_high < q1_high && q4_low < q1_low {
+                p.insert("downtrend_structure".into(), Decimal::ONE);
+            }
+        }
+
+        // ─── Support/Resistance level breach ───
+        // Check if the last candle closed above/below a significant prior level.
+        let prior_window = &window[..window.len() - 1];
+        let resistance = prior_window.iter().map(|c| c.high).fold(Decimal::ZERO, Decimal::max);
+        let support = prior_window.iter().map(|c| c.low).fold(Decimal::MAX, Decimal::min);
+        if cl > resistance {
+            p.insert("resistance_breakout".into(), Decimal::ONE);
+        }
+        if cl < support {
+            p.insert("support_breakdown".into(), Decimal::ONE);
+        }
     }
 
     p
+}
+
+// ---- Divergence detection ----
+// Compares two recent swing extremes in price against the RSI/MACD readings
+// at those points. Divergence = price makes a new extreme while the oscillator
+// fails to — a high-probability reversal signal.
+
+/// RSI computed over the `period` bars ending just before `end` (exclusive).
+fn rsi_at(closes: &[Decimal], end: usize, period: usize) -> Option<Decimal> {
+    if end < period + 1 || end > closes.len() { return None; }
+    rsi(&closes[..end], period)
+}
+
+/// MACD (fast-slow) computed over bars ending just before `end`.
+fn macd_at(closes: &[Decimal], end: usize) -> Option<Decimal> {
+    if end < 26 || end > closes.len() { return None; }
+    let fast = ema(&closes[..end], 12)?;
+    let slow = ema(&closes[..end], 26)?;
+    Some((fast - slow).round_dp(10))
+}
+
+fn detect_divergence(candles: &[Candle]) -> (String, String) {
+    let n = candles.len();
+    if n < 35 { return ("none".into(), "none".into()); }
+    let lookback = n.min(35);
+    let start = n - lookback;
+    let mid = start + lookback / 2;
+    let closes: Vec<Decimal> = candles.iter().map(|c| c.close).collect();
+
+    // Bearish: second-half high > first-half high, but RSI/MACD lower.
+    let (h1_idx, h1) = (start..mid)
+        .map(|i| (i, candles[i].high)).max_by(|a, b| a.1.cmp(&b.1)).unwrap_or((0, Decimal::ZERO));
+    let (h2_idx, h2) = (mid..n)
+        .map(|i| (i, candles[i].high)).max_by(|a, b| a.1.cmp(&b.1)).unwrap_or((0, Decimal::ZERO));
+    let bear_rsi = h2 > h1 && h1_idx > 0;
+    let bear_rsi = if bear_rsi {
+        let r1 = rsi_at(&closes, h1_idx + 1, 14);
+        let r2 = rsi_at(&closes, h2_idx + 1, 14);
+        match (r1, r2) { (Some(a), Some(b)) => b < a, _ => false }
+    } else { false };
+    let bear_macd = if h2 > h1 && h1_idx > 0 {
+        let m1 = macd_at(&closes, h1_idx + 1);
+        let m2 = macd_at(&closes, h2_idx + 1);
+        match (m1, m2) { (Some(a), Some(b)) => b < a, _ => false }
+    } else { false };
+
+    // Bullish: second-half low < first-half low, but RSI/MACD higher.
+    let (l1_idx, l1) = (start..mid)
+        .map(|i| (i, candles[i].low)).min_by(|a, b| a.1.cmp(&b.1)).unwrap_or((0, Decimal::MAX));
+    let (l2_idx, l2) = (mid..n)
+        .map(|i| (i, candles[i].low)).min_by(|a, b| a.1.cmp(&b.1)).unwrap_or((0, Decimal::MAX));
+    let bull_rsi = l2 < l1;
+    let bull_rsi = if bull_rsi {
+        let r1 = rsi_at(&closes, l1_idx + 1, 14);
+        let r2 = rsi_at(&closes, l2_idx + 1, 14);
+        match (r1, r2) { (Some(a), Some(b)) => b > a, _ => false }
+    } else { false };
+    let bull_macd = if l2 < l1 {
+        let m1 = macd_at(&closes, l1_idx + 1);
+        let m2 = macd_at(&closes, l2_idx + 1);
+        match (m1, m2) { (Some(a), Some(b)) => b > a, _ => false }
+    } else { false };
+
+    let rsi_div = if bear_rsi { "bearish" } else if bull_rsi { "bullish" } else { "none" };
+    let macd_div = if bear_macd { "bearish" } else if bull_macd { "bullish" } else { "none" };
+    (rsi_div.into(), macd_div.into())
 }
 
 fn bool_dec(b: bool) -> Decimal {

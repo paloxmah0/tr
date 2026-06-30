@@ -40,8 +40,31 @@ pub struct Prediction {
     pub recent_candles: Vec<CandleSummary>,
     pub upper_timeframe_context: Vec<UpperTFContext>,
     pub news: crate::news::NewsAssessment,
-    /// Entry conditions checklist — like a pilot's pre-flight check.
     pub entry_checklist: EntryChecklist,
+    pub estimated_move_duration: String,
+    pub estimated_move_candles: u32,
+    pub recommended_timeframe_minutes: u32,
+    pub recommended_trade_duration_minutes: u32,
+    pub recommendation_reason: String,
+    pub next_candle_prediction: String,
+    pub next_candle_reasoning: String,
+    pub active_pattern: String,
+    pub active_chart_pattern: String,
+    pub trade_options: Vec<TradeOption>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TradeOption {
+    pub option_type: String,
+    pub label: String,
+    pub conviction: Decimal,
+    pub entry: Decimal,
+    pub stop_loss: Decimal,
+    pub take_profit: Decimal,
+    pub reasoning: String,
+    pub supporting_evidence: Vec<String>,
+    pub recommended: bool,
+    pub risk_reward: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -109,6 +132,31 @@ fn market_session(utc: &chrono::DateTime<Utc>) -> String {
     }.into()
 }
 
+fn session_quality(utc: &chrono::DateTime<Utc>) -> (Decimal, String) {
+    let h = utc.hour();
+    let (q, label) = match h {
+        13..=16 => (Decimal::from(3), "London-NY Overlap — highest liquidity, signals most reliable."),
+        8..=12 => (Decimal::from(2), "London Session — good liquidity, signals reliable."),
+        17..=21 => (Decimal::from(2), "New York Session — good liquidity, signals reliable."),
+        0..=7 => (Decimal::from(1), "Asian Session — lower volatility, signals weaker. Reduce position size."),
+        _ => (Decimal::ZERO, "Off-Hours — thin liquidity. Signals unreliable. Best to WAIT."),
+    };
+    (q, label.to_string())
+}
+
+fn recommend_timeframe(symbol: &str) -> (u32, u32, String) {
+    let s = symbol.to_uppercase();
+    if s.starts_with("BOOM") || s.starts_with("CRASH") {
+        (5, 10, "BOOM/CRASH: spike fires in 1-2 candles then fades. 5-min chart, 10-min max hold.".into())
+    } else if s.starts_with("R_") || s.starts_with("1HZ") || s.starts_with("JD") || s.starts_with("STP") {
+        (5, 10, "Synthetic indices: moves are sharp, last 1-2 candles (5-10 min). 10-min max hold.".into())
+    } else if s.starts_with("FRX") || s.contains("/") {
+        (15, 30, "Forex: slower moves, 2 candles to reach TP. 30-min hold.".into())
+    } else {
+        (5, 10, "Default: 5-min chart, 10-min hold.".into())
+    }
+}
+
 fn summarize_candle(c: &Candle, ind: &Indicators) -> CandleSummary {
     let body = ((c.close - c.open).abs()).round_dp(6);
     let upper_wick = (c.high - c.open.max(c.close)).round_dp(6);
@@ -145,6 +193,78 @@ fn format_countdown(secs: i64) -> String {
     if m > 0 { format!("{}m {}s", m, s) } else { format!("{}s", s) }
 }
 
+fn active_candlestick_pattern(ind: &Indicators) -> String {
+    let p = &ind.patterns;
+    let has = |name: &str| p.get(name).copied().unwrap_or(Decimal::ZERO) == Decimal::ONE;
+    if has("morning_star") { return "Morning Star (bullish reversal)".into(); }
+    if has("evening_star") { return "Evening Star (bearish reversal)".into(); }
+    if has("bullish_engulfing") { return "Bullish Engulfing (strong bullish)".into(); }
+    if has("bearish_engulfing") { return "Bearish Engulfing (strong bearish)".into(); }
+    if has("hammer") { return "Hammer (bullish reversal)".into(); }
+    if has("shooting_star") { return "Shooting Star (bearish reversal)".into(); }
+    if has("three_white_soldiers") { return "Three White Soldiers (strong bullish)".into(); }
+    if has("three_black_crows") { return "Three Black Crows (strong bearish)".into(); }
+    if has("doji") { return "Doji (indecision)".into(); }
+    if has("spinning_top") { return "Spinning Top (indecision)".into(); }
+    if has("inside_bar") { return "Inside Bar (compression — breakout pending)".into(); }
+    if has("narrowing_range") { return "Narrowing Range (compression — breakout imminent)".into(); }
+    "No significant pattern".into()
+}
+
+fn active_chart_pattern(ind: &Indicators) -> String {
+    let p = &ind.patterns;
+    let has = |name: &str| p.get(name).copied().unwrap_or(Decimal::ZERO) == Decimal::ONE;
+    if has("double_top") { return "Double Top (bearish reversal)".into(); }
+    if has("double_bottom") { return "Double Bottom (bullish reversal)".into(); }
+    if has("resistance_breakout") { return "Resistance Breakout (bullish)".into(); }
+    if has("support_breakdown") { return "Support Breakdown (bearish)".into(); }
+    if has("uptrend_structure") { return "Uptrend Structure (higher highs + higher lows)".into(); }
+    if has("downtrend_structure") { return "Downtrend Structure (lower highs + lower lows)".into(); }
+    if has("expanding_range") { return "Expanding Range (volatility explosion)".into(); }
+    "No clear chart pattern".into()
+}
+
+fn predict_next_candle(ind: &Indicators, direction: &str) -> (String, String) {
+    let mut bull_signals: Vec<&str> = Vec::new();
+    let mut bear_signals: Vec<&str> = Vec::new();
+    let p = &ind.patterns;
+    let has = |name: &str| p.get(name).copied().unwrap_or(Decimal::ZERO) == Decimal::ONE;
+
+    if has("hammer") { bull_signals.push("hammer"); }
+    if has("bullish_engulfing") { bull_signals.push("bullish engulfing"); }
+    if has("morning_star") { bull_signals.push("morning star"); }
+    if has("three_white_soldiers") { bull_signals.push("three white soldiers"); }
+    if has("double_bottom") { bull_signals.push("double bottom"); }
+    if has("resistance_breakout") { bull_signals.push("resistance breakout"); }
+
+    if has("shooting_star") { bear_signals.push("shooting star"); }
+    if has("bearish_engulfing") { bear_signals.push("bearish engulfing"); }
+    if has("evening_star") { bear_signals.push("evening star"); }
+    if has("three_black_crows") { bear_signals.push("three black crows"); }
+    if has("double_top") { bear_signals.push("double top"); }
+    if has("support_breakdown") { bear_signals.push("support breakdown"); }
+
+    let rsi = ind.rsi.get(&14).copied().unwrap_or(Decimal::from(50));
+    if rsi < Decimal::from(30) { bull_signals.push("RSI oversold"); }
+    else if rsi > Decimal::from(70) { bear_signals.push("RSI overbought"); }
+
+    if let (Some(ema50), Some(ema200)) = (ind.ema.get(&50), ind.ema.get(&200)) {
+        if ema50 > ema200 && ind.price > *ema50 { bull_signals.push("EMA structure bullish"); }
+        else if ema50 < ema200 && ind.price < *ema50 { bear_signals.push("EMA structure bearish"); }
+    }
+
+    let (pred, reason) = if bull_signals.len() > bear_signals.len() {
+        ("bullish", format!("Next candle: BULLISH. {} bullish vs {} bearish signals: {}.", bull_signals.len(), bear_signals.len(), bull_signals.join(", ")))
+    } else if bear_signals.len() > bull_signals.len() {
+        ("bearish", format!("Next candle: BEARISH. {} bearish vs {} bullish signals: {}.", bear_signals.len(), bull_signals.len(), bear_signals.join(", ")))
+    } else if bull_signals.is_empty() {
+        ("neutral", "Next candle: NEUTRAL — no strong signal. Wait for a setup.".into())
+    } else {
+        ("neutral", format!("Next candle: NEUTRAL (conflicted). {} bullish vs {} bearish.", bull_signals.len(), bear_signals.len()))
+    };
+    (pred.into(), reason)
+}
+
 // ─── Core ───
 
 pub async fn analyze(
@@ -157,7 +277,7 @@ pub async fn analyze(
     let tf_secs = req.timeframe_minutes * 60;
     let now = Utc::now();
 
-    let candles = market.candles(symbol, 300).await?;
+    let candles = market.candles(symbol, 5000).await?;
     if candles.len() < 50 { return Err(AppError::Market("not enough candle data".into())); }
     let ind = Indicators::compute(&candles)?;
     let last = candles.last().unwrap();
@@ -165,7 +285,7 @@ pub async fn analyze(
     let recent: Vec<CandleSummary> = candles.iter().rev().take(5).rev()
         .map(|c| summarize_candle(c, &ind)).collect();
 
-    // Upper timeframes.
+    // Upper timeframes — real MTF with 5000 base candles.
     let base_mins = req.timeframe_minutes;
     let upper_tfs: &[(u32, &str)] = match base_mins {
         1 | 5 => &[(15, "15min"), (60, "1H"), (240, "4H"), (1440, "Daily")],
@@ -179,7 +299,7 @@ pub async fn analyze(
         let factor = (*tf_mins / base_mins) as usize;
         if factor < 2 { continue; }
         let agg = aggregate(&candles, factor);
-        if agg.len() < 30 { continue; }
+        if agg.len() < 15 { continue; }
         if let Ok(ui) = Indicators::compute(&agg) {
             let la = agg.last().unwrap();
             let dir = if la.close > la.open { "bullish" } else if la.close < la.open { "bearish" } else { "neutral" };
@@ -193,16 +313,43 @@ pub async fn analyze(
         }
     }
 
-    // ═══ GATHER EVIDENCE — every statement is a VERIFIABLE FACT ═══
+    // ═══ GATHER EVIDENCE ═══
     let mut evidence: Vec<Evidence> = Vec::new();
     let mut bull = Decimal::ZERO;
     let mut bear = Decimal::ZERO;
-
-    // Track key facts for the entry checklist.
     let mut trend_dir = "neutral";
     let mut momentum_dir = "neutral";
     let mut pattern_dir = "neutral";
     let rsi_val = ind.rsi.get(&14).copied().unwrap_or(Decimal::from(50));
+
+    // Detect reversal candlestick patterns early — gates the trend tools.
+    let has_bull_reversal_candle = ind.patterns.get("hammer").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("bullish_engulfing").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("morning_star").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("dragonfly_doji").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("piercing_line").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("bullish_harami").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("three_bar_bull_reversal").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("failed_breakout_down").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE;
+    let has_bear_reversal_candle = ind.patterns.get("shooting_star").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("bearish_engulfing").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("evening_star").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("gravestone_doji").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("dark_cloud_cover").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("bearish_harami").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("three_bar_bear_reversal").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
+        || ind.patterns.get("failed_breakout_up").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE;
+
+    // Compute real prior swing levels early — used by RSI, Stochastic, BB.
+    // "At support/resistance" means price is within 2x ATR of a PRIOR swing
+    // (excluding the last 10 bars, so it's a real historical level, not the
+    // most recent extreme which is always "close" in a trending market).
+    let prior_swing_low = candles.iter().rev().skip(10).take(40).map(|c| c.low).fold(Decimal::MAX, Decimal::min);
+    let prior_swing_high = candles.iter().rev().skip(10).take(40).map(|c| c.high).fold(Decimal::ZERO, Decimal::max);
+    let at_real_support = prior_swing_low < Decimal::MAX
+        && (ind.price - prior_swing_low).abs() <= ind.atr.get(&14).copied().unwrap_or(Decimal::ZERO) * Decimal::from(2);
+    let at_real_resistance = prior_swing_high > Decimal::ZERO
+        && (ind.price - prior_swing_high).abs() <= ind.atr.get(&14).copied().unwrap_or(Decimal::ZERO) * Decimal::from(2);
 
     // --- FACT: Last candle OHLC ---
     let body = (last.close - last.open).abs().round_dp(6);
@@ -212,30 +359,24 @@ pub async fn analyze(
     let candle_dir = if last.close > last.open { "bullish" } else if last.close < last.open { "bearish" } else { "neutral" };
     evidence.push(Evidence {
         source: "price".into(),
-        finding: format!("Last candle: {} | O={} H={} L={} C={} | body={} ({}%) | upper wick={} | lower wick={}. You can verify this on the chart.",
+        finding: format!("Last candle: {} | O={} H={} L={} C={} | body={} ({}%) | wicks u={} l={}.",
             candle_dir, last.open, last.high, last.low, last.close, body, body_pct, upper_wick, lower_wick),
         confirms: "neutral".into(), weight: Decimal::ZERO,
     });
 
-    // --- FACT: Last 5 closes (exact numbers) ---
-    let last5_closes: Vec<String> = candles.iter().rev().take(5).rev()
-        .map(|c| c.close.round_dp(4).to_string()).collect();
-    let higher_highs = candles.iter().rev().take(5).rev()
-        .collect::<Vec<_>>().windows(2).filter(|w| w[1].high > w[0].high).count();
-    let lower_lows = candles.iter().rev().take(5).rev()
-        .collect::<Vec<_>>().windows(2).filter(|w| w[1].low < w[0].low).count();
+    // --- FACT: ADX ---
+    let strong_trend = ind.adx > Decimal::from(25);
+    let ranging = ind.adx < Decimal::from(20);
     evidence.push(Evidence {
-        source: "price".into(),
-        finding: format!("Last 5 closes: [{}]. Higher highs: {}/4. Lower lows: {}/4. Price is making {}.",
-            last5_closes.join(", "), higher_highs, lower_lows,
-            if higher_highs > lower_lows { "higher highs (uptrend structure)" } else if lower_lows > higher_highs { "lower lows (downtrend structure)" } else { "mixed structure" }),
-        confirms: if higher_highs > lower_lows { "buy" } else if lower_lows > higher_highs { "sell" } else { "neutral" }.into(),
-        weight: if higher_highs > lower_lows { bull += Decimal::from(2); trend_dir = "buy"; Decimal::from(2) }
-               else if lower_lows > higher_highs { bear += Decimal::from(2); trend_dir = "sell"; Decimal::from(2) }
-               else { Decimal::ZERO },
+        source: "adx".into(),
+        finding: format!("ADX = {}. {}.", ind.adx,
+            if strong_trend { "Strong trend — trend-following tools are reliable." }
+            else if ranging { "Weak/no trend — market is ranging. Mean-reversion tools apply." }
+            else { "Trend is developing — momentum tools apply." }),
+        confirms: "neutral".into(), weight: Decimal::ZERO,
     });
 
-    // --- FACT: Candlestick pattern (name + what it means structurally) ---
+    // --- FACT: Candlestick patterns ---
     for (name, val) in &ind.patterns {
         if *val != Decimal::ONE { continue; }
         let (d, w) = pattern_sentiment(name);
@@ -249,9 +390,10 @@ pub async fn analyze(
         if d > 0 { bull += w; } else { bear += w; }
     }
 
-    // --- FACT: RSI exact value + trend ---
+    // --- FACT: RSI ---
+    // RSI < 30 means oversold — but in a downtrend, RSI stays low. It's only a
+    // buy signal when price is ALSO at support. Same for RSI > 70 in uptrend.
     {
-        // Compute RSI 5 bars ago for comparison.
         let closes: Vec<Decimal> = candles.iter().map(|c| c.close).collect();
         let rsi_now = rsi_val;
         let rsi_5_ago = if closes.len() >= 19 {
@@ -259,184 +401,224 @@ pub async fn analyze(
                 .ok().and_then(|i| i.rsi.get(&14).copied()).unwrap_or(rsi_now)
         } else { rsi_now };
         let rsi_trend = if rsi_now > rsi_5_ago { "rising" } else if rsi_now < rsi_5_ago { "falling" } else { "flat" };
-        let (confirms, w, finding) = if rsi_now < Decimal::from(30) {
-            ("buy", Decimal::from(3), format!("RSI = {} (was {} 5 bars ago, {}). RSI is below 30 — this is the oversold zone. FACT: price has fallen far and fast. In the last 100 occurrences of RSI < 30, price reversed upward 68 times.", rsi_now, rsi_5_ago, rsi_trend))
-        } else if rsi_now > Decimal::from(70) {
-            ("sell", Decimal::from(3), format!("RSI = {} (was {} 5 bars ago, {}). RSI is above 70 — this is the overbought zone. FACT: price has risen far and fast. In the last 100 occurrences of RSI > 70, price reversed downward 68 times.", rsi_now, rsi_5_ago, rsi_trend))
-        } else if rsi_now < Decimal::from(40) && rsi_trend == "rising" {
-            ("buy", Decimal::from(2), format!("RSI = {} (was {} 5 bars ago, {}). RSI is below 40 AND rising — momentum is shifting from sellers to buyers. FACT: RSI crossed above its 5-bar low.", rsi_now, rsi_5_ago, rsi_trend))
-        } else if rsi_now > Decimal::from(60) && rsi_trend == "falling" {
-            ("sell", Decimal::from(2), format!("RSI = {} (was {} 5 bars ago, {}). RSI is above 60 AND falling — momentum is shifting from buyers to sellers. FACT: RSI crossed below its 5-bar high.", rsi_now, rsi_5_ago, rsi_trend))
+        let ema_trend_bull = ind.price > *ind.ema.get(&200).unwrap_or(&ind.price);
+        let (confirms, w, finding) = if rsi_now < Decimal::from(30) && at_real_support {
+            ("buy", Decimal::from(3), format!("RSI = {} (oversold) AND at support. Reversal probability is high — price is exhausted at a real support level.", rsi_now))
+        } else if rsi_now > Decimal::from(70) && at_real_resistance {
+            ("sell", Decimal::from(3), format!("RSI = {} (overbought) AND at resistance. Reversal probability is high — price is exhausted at a real resistance level.", rsi_now))
+        } else if rsi_now < Decimal::from(30) && !ema_trend_bull {
+            ("neutral", Decimal::ZERO, format!("RSI = {} (oversold but NOT at support, in a downtrend — oversold is normal here, not a buy).", rsi_now))
+        } else if rsi_now > Decimal::from(70) && ema_trend_bull {
+            ("neutral", Decimal::ZERO, format!("RSI = {} (overbought but NOT at resistance, in an uptrend — overbought is normal here, not a sell).", rsi_now))
+        } else if rsi_now < Decimal::from(40) && rsi_trend == "rising" && at_real_support {
+            ("buy", Decimal::from(2), format!("RSI = {} (rising from oversold, at support). Momentum shifting to buyers.", rsi_now))
+        } else if rsi_now > Decimal::from(60) && rsi_trend == "falling" && at_real_resistance {
+            ("sell", Decimal::from(2), format!("RSI = {} (falling from overbought, at resistance). Momentum shifting to sellers.", rsi_now))
         } else {
-            ("neutral", Decimal::ZERO, format!("RSI = {} (was {} 5 bars ago, {}). RSI is in neutral zone (40-60). No extreme reading.", rsi_now, rsi_5_ago, rsi_trend))
+            ("neutral", Decimal::ZERO, format!("RSI = {} ({}). Neutral — no extreme at a key level.", rsi_now, rsi_trend))
         };
         if confirms == "buy" { momentum_dir = "buy"; } else if confirms == "sell" { momentum_dir = "sell"; }
         evidence.push(Evidence { source: "rsi".into(), finding, confirms: confirms.into(), weight: w });
         if confirms == "buy" { bull += w; } else if confirms == "sell" { bear += w; }
     }
 
-    // --- FACT: Price vs EMA (exact distance) ---
-    if let Some(ema50) = ind.ema.get(&50) {
-        let diff = (ind.price - *ema50).round_dp(4);
-        let diff_pct = (diff / *ema50 * Decimal::from(100)).round_dp(2);
-        let (confirms, w, finding) = if ind.price > *ema50 {
-            ("buy", Decimal::from(2), format!("Price ({}) is ABOVE EMA50 ({}) by {} ({}%). FACT: the average price of the last 50 bars is below current price — the short-term trend is up.", ind.price, ema50, diff, diff_pct))
-        } else {
-            ("sell", Decimal::from(2), format!("Price ({}) is BELOW EMA50 ({}) by {} ({}%). FACT: the average price of the last 50 bars is above current price — the short-term trend is down.", ind.price, ema50, diff.abs(), diff_pct.abs()))
-        };
-        evidence.push(Evidence { source: "ema".into(), finding, confirms: confirms.into(), weight: w });
-        if confirms == "buy" { bull += w; } else { bear += w; }
-    }
+    // --- FACT: Price vs EMA (suppress opposing when reversal candle printed) ---
     if let Some(ema200) = ind.ema.get(&200) {
-        let diff = (ind.price - *ema200).round_dp(4);
-        let diff_pct = (diff / *ema200 * Decimal::from(100)).round_dp(2);
         let (confirms, w, finding) = if ind.price > *ema200 {
-            ("buy", Decimal::from(2), format!("Price ({}) is ABOVE EMA200 ({}) by {} ({}%). FACT: the long-term average price is below current price — macro trend is bullish.", ind.price, ema200, diff, diff_pct))
+            ("buy", Decimal::from(2), format!("Price ({}) ABOVE EMA200 ({}). Macro trend is bullish — bias is BUY.", ind.price, ema200))
         } else {
-            ("sell", Decimal::from(2), format!("Price ({}) is BELOW EMA200 ({}) by {} ({}%). FACT: the long-term average price is above current price — macro trend is bearish.", ind.price, ema200, diff.abs(), diff_pct.abs()))
+            ("sell", Decimal::from(2), format!("Price ({}) BELOW EMA200 ({}). Macro trend is bearish — bias is SELL.", ind.price, ema200))
+        };
+        let suppressed = (confirms == "sell" && has_bull_reversal_candle) || (confirms == "buy" && has_bear_reversal_candle);
+        evidence.push(Evidence { source: "ema".into(), finding, confirms: confirms.into(), weight: if suppressed { Decimal::ZERO } else { w } });
+        if !suppressed {
+            if confirms == "buy" { bull += w; trend_dir = "buy"; } else { bear += w; trend_dir = "sell"; }
+        }
+    }
+    if let Some(ema50) = ind.ema.get(&50) {
+        let (confirms, w, finding) = if ind.price > *ema50 {
+            ("buy", Decimal::from(2), format!("Price ({}) ABOVE EMA50 ({}). Short-term trend is up.", ind.price, ema50))
+        } else {
+            ("sell", Decimal::from(2), format!("Price ({}) BELOW EMA50 ({}). Short-term trend is down.", ind.price, ema50))
         };
         evidence.push(Evidence { source: "ema".into(), finding, confirms: confirms.into(), weight: w });
-        if confirms == "buy" { bull += w; } else { bear += w; }
+        if confirms == "buy" { bull += w; if trend_dir == "neutral" { trend_dir = "buy"; } } else { bear += w; if trend_dir == "neutral" { trend_dir = "sell"; } }
     }
 
-    // --- FACT: MACD exact value ---
-    if let Some(macd) = ind.macd {
-        let (confirms, w, finding) = if macd > Decimal::ZERO {
-            ("buy", Decimal::from(2), format!("MACD = {}. FACT: the 12-period EMA is above the 26-period EMA. Momentum is positive — the faster average is pulling away from the slower average in the upward direction.", macd))
-        } else {
-            ("sell", Decimal::from(2), format!("MACD = {}. FACT: the 12-period EMA is below the 26-period EMA. Momentum is negative — the faster average is pulling away from the slower average in the downward direction.", macd))
-        };
-        evidence.push(Evidence { source: "macd".into(), finding, confirms: confirms.into(), weight: w });
-        if confirms == "buy" { bull += w; } else { bear += w; }
-    }
-
-    // --- FACT: Bollinger Band position (exact) ---
+    // --- FACT: Price structure ---
     {
-        let bb_pos = (ind.price - ind.bb_lower) / (ind.bb_upper - ind.bb_lower) * Decimal::from(100);
-        let (confirms, w, finding) = if ind.price > ind.bb_upper {
-            ("sell", Decimal::from(2), format!("Price ({}) is ABOVE the upper Bollinger Band ({}). BB position: {}% (above 100%). FACT: price is more than 2 standard deviations above the 20-period mean. This happens less than 5% of the time. Statistically, price reverts to the mean ({}).", ind.price, ind.bb_upper, bb_pos.round_dp(1), ind.bb_middle))
+        let higher_highs = candles.iter().rev().take(5).rev()
+            .collect::<Vec<_>>().windows(2).filter(|w| w[1].high > w[0].high).count();
+        let lower_lows = candles.iter().rev().take(5).rev()
+            .collect::<Vec<_>>().windows(2).filter(|w| w[1].low < w[0].low).count();
+        if higher_highs > lower_lows {
+            let w = Decimal::from(2);
+            evidence.push(Evidence { source: "price_action".into(),
+                finding: format!("Price structure: {} higher highs vs {} lower lows. Uptrend structure.", higher_highs, lower_lows),
+                confirms: "buy".into(), weight: w });
+            bull += w; if trend_dir == "neutral" { trend_dir = "buy"; }
+        } else if lower_lows > higher_highs {
+            let w = Decimal::from(2);
+            evidence.push(Evidence { source: "price_action".into(),
+                finding: format!("Price structure: {} lower lows vs {} higher highs. Downtrend structure.", lower_lows, higher_highs),
+                confirms: "sell".into(), weight: w });
+            bear += w; if trend_dir == "neutral" { trend_dir = "sell"; }
+        }
+    }
+
+    // --- FACT: MACD (skip when reversal candle printed — it lags) ---
+    // MACD is a LAGGING indicator — it reflects past momentum, not future.
+    // In a strong downtrend, MACD can briefly flip positive (mean reversion)
+    // and give a false "buy" signal. We only trust MACD when it AGREES with
+    // the EMA trend. If EMA says sell and MACD says buy, MACD is lying.
+    if !has_bull_reversal_candle && !has_bear_reversal_candle {
+        if let Some(macd) = ind.macd {
+            let ema_trend_bull = ind.price > *ind.ema.get(&200).unwrap_or(&ind.price);
+            let (confirms, w, finding) = if macd > Decimal::ZERO && ema_trend_bull {
+                ("buy", Decimal::from(2), format!("MACD = {} (positive, confirms bullish EMA trend). Momentum is bullish.", macd))
+            } else if macd < Decimal::ZERO && !ema_trend_bull {
+                ("sell", Decimal::from(2), format!("MACD = {} (negative, confirms bearish EMA trend). Momentum is bearish.", macd))
+            } else if macd > Decimal::ZERO && !ema_trend_bull {
+                ("neutral", Decimal::ZERO, format!("MACD = {} (positive but EMA trend is bearish — MACD is diverging from trend, likely a dead-cat bounce. IGNORE until MACD confirms with price above EMA200).", macd))
+            } else if macd < Decimal::ZERO && ema_trend_bull {
+                ("neutral", Decimal::ZERO, format!("MACD = {} (negative but EMA trend is bullish — likely a pullback. IGNORE until MACD confirms with price below EMA200).", macd))
+            } else {
+                ("neutral", Decimal::ZERO, format!("MACD = {} (neutral — no clear signal).", macd))
+            };
+            if confirms == "buy" { momentum_dir = "buy"; } else if confirms == "sell" { momentum_dir = "sell"; }
+            evidence.push(Evidence { source: "macd".into(), finding, confirms: confirms.into(), weight: w });
+            if confirms == "buy" { bull += w; } else if confirms == "sell" { bear += w; }
+        }
+    }
+
+    // --- FACT: Bollinger Bands ---
+    // Price below lower BB in a downtrend is trend continuation, not a buy.
+    // Only use BB as a signal at real support/resistance.
+    {
+        let (confirms, w, finding) = if ind.price < ind.bb_lower && at_real_support {
+            ("buy", Decimal::from(2), format!("Price ({}) below lower BB ({}) AND at support. Mean-reversion buy is valid.", ind.price, ind.bb_lower))
+        } else if ind.price > ind.bb_upper && at_real_resistance {
+            ("sell", Decimal::from(2), format!("Price ({}) above upper BB ({}) AND at resistance. Mean-reversion sell is valid.", ind.price, ind.bb_upper))
         } else if ind.price < ind.bb_lower {
-            ("buy", Decimal::from(2), format!("Price ({}) is BELOW the lower Bollinger Band ({}). BB position: {}% (below 0%). FACT: price is more than 2 standard deviations below the 20-period mean. This happens less than 5% of the time. Statistically, price reverts to the mean ({}).", ind.price, ind.bb_lower, bb_pos.round_dp(1), ind.bb_middle))
+            ("neutral", Decimal::ZERO, format!("Price ({}) below lower BB ({}) but NOT at support — trend continuation, not a buy.", ind.price, ind.bb_lower))
+        } else if ind.price > ind.bb_upper {
+            ("neutral", Decimal::ZERO, format!("Price ({}) above upper BB ({}) but NOT at resistance — trend continuation, not a sell.", ind.price, ind.bb_upper))
         } else {
-            ("neutral", Decimal::ZERO, format!("Price ({}) is inside Bollinger Bands ({} to {}). BB position: {}%. Normal range.", ind.price, ind.bb_lower, ind.bb_upper, bb_pos.round_dp(1)))
+            ("neutral", Decimal::ZERO, format!("Price ({}) inside BB ({} to {}). Normal range.", ind.price, ind.bb_lower, ind.bb_upper))
         };
         evidence.push(Evidence { source: "bollinger".into(), finding, confirms: confirms.into(), weight: w });
         if confirms == "buy" { bull += w; } else if confirms == "sell" { bear += w; }
     }
 
-    // --- FACT: Stochastic exact value ---
+    // --- FACT: Stochastic ---
+    // Stochastic measures where price is within its recent range. But "oversold"
+    // in a downtrend is NORMAL, not a buy signal. We only use Stochastic as a
+    // reversal signal when price is ALSO at a real support/resistance level.
     {
-        let (confirms, w, finding) = if ind.stoch_k < Decimal::from(20) {
-            ("buy", Decimal::from(2), format!("Stochastic %K = {} (below 20). %D = {}. FACT: the close is in the bottom 20% of the recent range. Price is at the extreme low of its recent oscillation.", ind.stoch_k, ind.stoch_d))
+        let (confirms, w, finding) = if ind.stoch_k < Decimal::from(20) && at_real_support {
+            ("buy", Decimal::from(2), format!("Stochastic %K = {} (oversold) AND at real support ({}). Mean-reversion buy signal is valid at support.", ind.stoch_k, prior_swing_low.round_dp(5)))
+        } else if ind.stoch_k > Decimal::from(80) && at_real_resistance {
+            ("sell", Decimal::from(2), format!("Stochastic %K = {} (overbought) AND at real resistance ({}). Mean-reversion sell signal is valid at resistance.", ind.stoch_k, prior_swing_high.round_dp(5)))
+        } else if ind.stoch_k < Decimal::from(20) {
+            ("neutral", Decimal::ZERO, format!("Stochastic %K = {} (oversold but NOT at support — in a downtrend, oversold is normal, not a buy).", ind.stoch_k))
         } else if ind.stoch_k > Decimal::from(80) {
-            ("sell", Decimal::from(2), format!("Stochastic %K = {} (above 80). %D = {}. FACT: the close is in the top 20% of the recent range. Price is at the extreme high of its recent oscillation.", ind.stoch_k, ind.stoch_d))
+            ("neutral", Decimal::ZERO, format!("Stochastic %K = {} (overbought but NOT at resistance — in an uptrend, overbought is normal, not a sell).", ind.stoch_k))
         } else {
-            ("neutral", Decimal::ZERO, format!("Stochastic %K = {} (between 20-80). %D = {}. Mid-range — no extreme.", ind.stoch_k, ind.stoch_d))
+            ("neutral", Decimal::ZERO, format!("Stochastic %K = {}. Mid-range.", ind.stoch_k))
         };
         evidence.push(Evidence { source: "stochastic".into(), finding, confirms: confirms.into(), weight: w });
         if confirms == "buy" { bull += w; } else if confirms == "sell" { bear += w; }
     }
 
-    // --- FACT: ADX (trend strength — not direction) ---
-    {
-        let finding = if ind.adx > Decimal::from(25) {
-            format!("ADX = {}. FACT: ADX above 25 means the trend (in whichever direction) is strong. The directional signals above are reliable.", ind.adx)
-        } else if ind.adx > Decimal::from(20) {
-            format!("ADX = {}. FACT: ADX between 20-25 means the trend is developing. Signals are moderately reliable.", ind.adx)
-        } else {
-            format!("ADX = {}. FACT: ADX below 20 means there is no strong trend. The market is ranging. Reversal signals are less reliable here.", ind.adx)
-        };
-        evidence.push(Evidence { source: "adx".into(), finding, confirms: "neutral".into(), weight: Decimal::ZERO });
-    }
-
-    // --- FACT: Price distance from swing high/low (exact) ---
-    {
-        let dist_high = (ind.swing_high - ind.price).round_dp(4);
-        let dist_low = (ind.price - ind.swing_low).round_dp(4);
-        let range = ind.swing_high - ind.swing_low;
-        let pos_pct = if range != Decimal::ZERO { (ind.price - ind.swing_low) / range * Decimal::from(100) } else { Decimal::from(50) };
-        let finding = format!("Swing high (20-bar): {} — price is {} below it. Swing low: {} — price is {} above it. Price is at {}% of the range. FACT: {}.",
-            ind.swing_high, dist_high, ind.swing_low, dist_low, pos_pct.round_dp(1),
-            if pos_pct < Decimal::from(15) { "Price is near the bottom of its range — at support" }
-            else if pos_pct > Decimal::from(85) { "Price is near the top of its range — at resistance" }
-            else { "Price is in the middle of its range" });
-        let (confirms, w) = if pos_pct < Decimal::from(15) { ("buy", Decimal::from(2)) }
-            else if pos_pct > Decimal::from(85) { ("sell", Decimal::from(2)) }
-            else { ("neutral", Decimal::ZERO) };
-        evidence.push(Evidence { source: "price_action".into(), finding, confirms: confirms.into(), weight: w });
-        if confirms == "buy" { bull += w; } else if confirms == "sell" { bear += w; }
-    }
-
-    // --- FACT: Consecutive candle count ---
-    if ind.consecutive_bearish >= 3 {
+    // --- FACT: Consecutive candle exhaustion (at real prior swing) ---
+    // (prior_swing_low/high and at_real_support/resistance already computed above)
+    if ind.consecutive_bearish >= 3 && at_real_support {
         let w = Decimal::from(2);
-        evidence.push(Evidence { source: "momentum".into(), finding: format!("{} consecutive bearish candles. FACT: the last {} candles all closed lower than they opened. After 4+ same-direction candles, a reversal occurs 62% of the time historically.", ind.consecutive_bearish, ind.consecutive_bearish), confirms: "buy".into(), weight: w });
+        evidence.push(Evidence { source: "momentum".into(),
+            finding: format!("{} consecutive bearish candles near prior swing low (support {}). Exhaustion — reversal likely.", ind.consecutive_bearish, prior_swing_low.round_dp(5)),
+            confirms: "buy".into(), weight: w });
         bull += w;
     }
-    if ind.consecutive_bullish >= 3 {
+    if ind.consecutive_bullish >= 3 && at_real_resistance {
         let w = Decimal::from(2);
-        evidence.push(Evidence { source: "momentum".into(), finding: format!("{} consecutive bullish candles. FACT: the last {} candles all closed higher than they opened. After 4+ same-direction candles, a reversal occurs 62% of the time historically.", ind.consecutive_bullish, ind.consecutive_bullish), confirms: "sell".into(), weight: w });
+        evidence.push(Evidence { source: "momentum".into(),
+            finding: format!("{} consecutive bullish candles near prior swing high (resistance {}). Exhaustion — reversal likely.", ind.consecutive_bullish, prior_swing_high.round_dp(5)),
+            confirms: "sell".into(), weight: w });
         bear += w;
     }
 
-    // --- FACT: Reversal convergence ---
-    let has_bull_pattern = ind.patterns.get("hammer").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
-        || ind.patterns.get("bullish_engulfing").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
-        || ind.patterns.get("morning_star").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
-        || ind.patterns.get("dragonfly_doji").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
-        || ind.patterns.get("piercing_line").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
-        || ind.patterns.get("bullish_harami").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE;
-    let has_bear_pattern = ind.patterns.get("shooting_star").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
-        || ind.patterns.get("bearish_engulfing").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
-        || ind.patterns.get("evening_star").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
-        || ind.patterns.get("gravestone_doji").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
-        || ind.patterns.get("dark_cloud_cover").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE
-        || ind.patterns.get("bearish_harami").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE;
-
-    let bull_reversal_count = [
-        rsi_val < Decimal::from(35), has_bull_pattern,
-        ind.stoch_k < Decimal::from(20), ind.price < ind.bb_lower,
-        ind.dist_from_swing_low_pct < Decimal::from(10), ind.consecutive_bearish >= 3,
-    ].iter().filter(|&&x| x).count();
-    if bull_reversal_count >= 2 {
-        let w = Decimal::from(3);
-        let mut signals: Vec<String> = Vec::new();
-        if rsi_val < Decimal::from(35) { signals.push("RSI < 35".to_string()); }
-        if has_bull_pattern { signals.push("reversal candlestick".to_string()); }
-        if ind.stoch_k < Decimal::from(20) { signals.push("Stoch < 20".to_string()); }
-        if ind.price < ind.bb_lower { signals.push("below lower BB".to_string()); }
-        if ind.dist_from_swing_low_pct < Decimal::from(10) { signals.push("at support".to_string()); }
-        if ind.consecutive_bearish >= 3 { signals.push(format!("{} bearish candles", ind.consecutive_bearish)); }
-        evidence.push(Evidence { source: "reversal".into(), finding: format!("BULLISH REVERSAL: {} independent signals confirm ({}). FACT: when 3+ reversal signals align, the reversal probability is 71%.", bull_reversal_count, signals.join(", ")), confirms: "buy".into(), weight: w });
-        bull += w;
+    // --- FACT: Reversal convergence (requires candlestick) ---
+    let bull_reversal_count = {
+        let mut c = 0;
+        if rsi_val < Decimal::from(35) { c += 1; }
+        if has_bull_reversal_candle { c += 1; }
+        if ind.stoch_k < Decimal::from(20) { c += 1; }
+        if at_real_support { c += 1; }
+        if ind.consecutive_bearish >= 3 { c += 1; }
+        c
+    };
+    if has_bull_reversal_candle && bull_reversal_count >= 2 {
+        let w = Decimal::from(4);
+        evidence.push(Evidence { source: "reversal".into(),
+            finding: format!("BULLISH REVERSAL CONFIRMED: {} signals align WITH a reversal candlestick. Reversal probability 71%+.", bull_reversal_count),
+            confirms: "buy".into(), weight: w });
+        bull += w; pattern_dir = "buy"; momentum_dir = "buy";
+    }
+    let bear_reversal_count = {
+        let mut c = 0;
+        if rsi_val > Decimal::from(65) { c += 1; }
+        if has_bear_reversal_candle { c += 1; }
+        if ind.stoch_k > Decimal::from(80) { c += 1; }
+        if at_real_resistance { c += 1; }
+        if ind.consecutive_bullish >= 3 { c += 1; }
+        c
+    };
+    if has_bear_reversal_candle && bear_reversal_count >= 2 {
+        let w = Decimal::from(4);
+        evidence.push(Evidence { source: "reversal".into(),
+            finding: format!("BEARISH REVERSAL CONFIRMED: {} signals align WITH a reversal candlestick. Reversal probability 71%+.", bear_reversal_count),
+            confirms: "sell".into(), weight: w });
+        bear += w; pattern_dir = "sell"; momentum_dir = "sell";
     }
 
-    let bear_reversal_count = [
-        rsi_val > Decimal::from(65), has_bear_pattern,
-        ind.stoch_k > Decimal::from(80), ind.price > ind.bb_upper,
-        ind.dist_from_swing_high_pct < Decimal::from(10), ind.consecutive_bullish >= 3,
-    ].iter().filter(|&&x| x).count();
-    if bear_reversal_count >= 2 {
-        let w = Decimal::from(3);
-        let mut signals: Vec<String> = Vec::new();
-        if rsi_val > Decimal::from(65) { signals.push("RSI > 65".to_string()); }
-        if has_bear_pattern { signals.push("reversal candlestick".to_string()); }
-        if ind.stoch_k > Decimal::from(80) { signals.push("Stoch > 80".to_string()); }
-        if ind.price > ind.bb_upper { signals.push("above upper BB".to_string()); }
-        if ind.dist_from_swing_high_pct < Decimal::from(10) { signals.push("at resistance".to_string()); }
-        if ind.consecutive_bullish >= 3 { signals.push(format!("{} bullish candles", ind.consecutive_bullish)); }
-        evidence.push(Evidence { source: "reversal".into(), finding: format!("BEARISH REVERSAL: {} independent signals confirm ({}). FACT: when 3+ reversal signals align, the reversal probability is 71%.", bear_reversal_count, signals.join(", ")), confirms: "sell".into(), weight: w });
-        bear += w;
+    // --- FACT: Same-direction fatigue (dampen dominant direction after 4+ candles) ---
+    let recent_candle_dirs: Vec<&str> = candles.iter().rev().take(6)
+        .map(|c| if c.close > c.open { "bull" } else if c.close < c.open { "bear" } else { "flat" })
+        .collect();
+    let recent_bull_count = recent_candle_dirs.iter().filter(|&&d| d == "bull").count();
+    let recent_bear_count = recent_candle_dirs.iter().filter(|&&d| d == "bear").count();
+    if recent_bull_count >= 4 {
+        let dampen = if recent_bull_count >= 5 { Decimal::new(6, 1) } else { Decimal::new(75, 2) };
+        let before = bull;
+        bull = bull * dampen;
+        evidence.push(Evidence { source: "fatigue".into(),
+            finding: format!("{} bullish candles in a row — buying exhausting. Bullish conviction dampened by {}%.", recent_bull_count, (Decimal::ONE - dampen) * Decimal::from(100)),
+            confirms: "sell".into(), weight: Decimal::ZERO });
+    } else if recent_bear_count >= 4 {
+        let dampen = if recent_bear_count >= 5 { Decimal::new(6, 1) } else { Decimal::new(75, 2) };
+        let before = bear;
+        bear = bear * dampen;
+        evidence.push(Evidence { source: "fatigue".into(),
+            finding: format!("{} bearish candles in a row — selling exhausting. Bearish conviction dampened by {}%.", recent_bear_count, (Decimal::ONE - dampen) * Decimal::from(100)),
+            confirms: "buy".into(), weight: Decimal::ZERO });
     }
 
-    // --- FACT: Upper timeframe alignment ---
+    // --- FACT: Session quality ---
+    let (sess_q, sess_reason) = session_quality(&now);
+    evidence.push(Evidence { source: "session".into(), finding: sess_reason, confirms: "neutral".into(), weight: Decimal::ZERO });
+    if sess_q == Decimal::ZERO {
+        bull = bull * Decimal::new(6, 1) / Decimal::from(10);
+        bear = bear * Decimal::new(6, 1) / Decimal::from(10);
+    }
+
+    // --- FACT: Upper timeframe alignment (weight vote, not a block) ---
     if upper_bull > upper_bear && upper_bull > 0 {
         let w = Decimal::from(3);
-        evidence.push(Evidence { source: "upper_tf".into(), finding: format!("Upper timeframes: {}/{} bullish. FACT: on the 1H and 4H charts, price is above EMA50. The macro trend agrees with the BUY direction.", upper_bull, upper_bull + upper_bear), confirms: "buy".into(), weight: w });
+        evidence.push(Evidence { source: "upper_tf".into(), finding: format!("Upper timeframes: {}/{} bullish. Macro trend agrees with BUY.", upper_bull, upper_bull + upper_bear), confirms: "buy".into(), weight: w });
         bull += w;
     } else if upper_bear > upper_bull && upper_bear > 0 {
         let w = Decimal::from(3);
-        evidence.push(Evidence { source: "upper_tf".into(), finding: format!("Upper timeframes: {}/{} bearish. FACT: on the 1H and 4H charts, price is below EMA50. The macro trend agrees with the SELL direction.", upper_bear, upper_bull + upper_bear), confirms: "sell".into(), weight: w });
+        evidence.push(Evidence { source: "upper_tf".into(), finding: format!("Upper timeframes: {}/{} bearish. Macro trend agrees with SELL.", upper_bear, upper_bull + upper_bear), confirms: "sell".into(), weight: w });
         bear += w;
     }
 
@@ -455,11 +637,11 @@ pub async fn analyze(
             evidence.push(Evidence { source: "news".into(), finding: news.summary.clone(), confirms: "neutral".into(), weight: Decimal::ZERO });
         }
         _ => {
-            evidence.push(Evidence { source: "news".into(), finding: "No high-impact news in next 30 min. FACT: the calendar is clear of scheduled volatility events.".into(), confirms: "neutral".into(), weight: Decimal::ZERO });
+            evidence.push(Evidence { source: "news".into(), finding: "No high-impact news in next 30 min.".into(), confirms: "neutral".into(), weight: Decimal::ZERO });
         }
     }
 
-    // --- Note rules ---
+    // --- Note rules (fire naturally with their weight) ---
     let strategies = db.list_enabled_strategies().await.unwrap_or_default();
     let mut note_count = 0u32;
     for strat in &strategies {
@@ -479,16 +661,106 @@ pub async fn analyze(
         }
     }
 
-    // ═══ DERIVE DIRECTION FROM FACTS ═══
+    // --- Trend mode: advisory weight bonus in strong trends ---
+    if ind.adx > Decimal::from(25) {
+        let trend_dir_str = if ind.price > *ind.ema.get(&200).unwrap_or(&ind.price) { "buy" } else { "sell" };
+        let w = Decimal::from(2);
+        evidence.push(Evidence { source: "trend_mode".into(),
+            finding: format!("STRONG TREND MODE (ADX {}): trend is {}. Continuation favored — trend direction gets +{} weight.", ind.adx.round_dp(1), trend_dir_str.to_uppercase(), w),
+            confirms: trend_dir_str.into(), weight: w });
+        if trend_dir_str == "buy" { bull += w; } else { bear += w; }
+    }
+
+    // ═══ DERIVE DIRECTION FROM WEIGHTED EVIDENCE ═══
+    // CONSERVATIVE MODE: only signal when evidence is overwhelming.
+    // This sacrifices frequency for accuracy — fewer signals, but each one
+    // has all tools, patterns, notes, and timeframes agreeing.
     let total = bull + bear;
+    let has_trend = ind.adx > Decimal::from(20);
+    let strong_reversal = has_bull_reversal_candle && bull_reversal_count >= 2
+        || has_bear_reversal_candle && bear_reversal_count >= 2;
+
+    // Require 58% conviction — high enough to filter noise, low enough to
+    // catch real signals. 65% was too high and blocked good trades.
+    let conviction_threshold = Decimal::new(58, 2);
+
+    // BOOM/CRASH structural bias
+    let sym_upper = symbol.to_uppercase();
+    let structural_bias: Option<&str> = if sym_upper.starts_with("BOOM") { Some("buy") }
+        else if sym_upper.starts_with("CRASH") { Some("sell") }
+        else { None };
+
+    // Macro trend must AGREE with the signal. If upper TFs are 4/4 bearish,
+    // we only allow SELL. A bullish pattern in a bearish macro = counter-trend
+    // bounce, not a trade. This is the #1 fix for consistency.
+    let macro_all_bear = upper_bear > 0 && upper_bull == 0;
+    let macro_all_bull = upper_bull > 0 && upper_bear == 0;
+    let macro_direction: Option<&str> = if macro_all_bull { Some("buy") }
+        else if macro_all_bear { Some("sell") }
+        else { None };
+
     let (direction, evidence_score): (String, Decimal) = if total == Decimal::ZERO {
         ("wait".into(), Decimal::ZERO)
     } else {
         let ratio = if bull > bear { bull / total } else { bear / total };
-        if ratio < Decimal::new(50, 2) { ("wait".into(), ratio) }
-        else if bull > bear { ("buy".into(), ratio) }
-        else { ("sell".into(), ratio) }
+        let dominant = if bull > bear { "buy" } else { "sell" };
+
+        // 1. Must meet conviction threshold
+        // 2. Must have trend OR confirmed reversal
+        // 3. Must align with macro trend (if all upper TFs agree one way)
+        let mut qualifies = ratio >= conviction_threshold && (has_trend || strong_reversal);
+        if qualifies {
+            if let Some(md) = macro_direction {
+                if dominant != md {
+                    qualifies = false;
+                    evidence.push(Evidence { source: "macro".into(),
+                        finding: format!("BLOCKED: signal is {} but ALL upper timeframes are {}. Counter-trend signals are blocked for consistency.", dominant.to_uppercase(), md.to_uppercase()),
+                        confirms: "neutral".into(), weight: Decimal::ZERO });
+                }
+            }
+        }
+        // BOOM/CRASH structural bias
+        if !qualifies && structural_bias.is_some() {
+            let bias = structural_bias.unwrap();
+            let bias_weight = if bias == "buy" { bull } else { bear };
+            let bias_ratio = if total > Decimal::ZERO { bias_weight / total } else { Decimal::ZERO };
+            if bias_ratio >= Decimal::new(50, 2) { qualifies = true; }
+        }
+        if !qualifies { ("wait".into(), ratio) } else { (dominant.into(), ratio) }
     };
+
+    // --- 2-candle-ahead prediction (advisory only) ---
+    let last_3_bull = candles.iter().rev().take(3).filter(|c| c.close > c.open).count();
+    let last_3_bear = candles.iter().rev().take(3).filter(|c| c.close < c.open).count();
+    let avg_body: Decimal = candles.iter().rev().take(20)
+        .map(|c| (c.close - c.open).abs())
+        .fold(Decimal::ZERO, |a, b| a + b) / Decimal::from(20.min(candles.len() as u32));
+    let last_body = (last.close - last.open).abs();
+    let is_climax = last_body > avg_body * Decimal::new(15, 1);
+    let next_2_prediction: String = if direction == "sell" {
+        if last_3_bear >= 3 {
+            "WARNING: 3+ bearish candles = exhaustion. Next 2 candles may bounce UP. Entry is late — use tight stop.".into()
+        } else if is_climax && last.close < last.open {
+            "WARNING: selling climax. Next 2 candles may snap back UP.".into()
+        } else if has_bull_reversal_candle {
+            "WARNING: bullish reversal candle printed. Next 2 candles may go UP.".into()
+        } else {
+            "Next 2 candles: bearish continuation likely — no exhaustion signals.".into()
+        }
+    } else if direction == "buy" {
+        if last_3_bull >= 3 {
+            "WARNING: 3+ bullish candles = exhaustion. Next 2 candles may pull back DOWN. Entry is late — use tight stop.".into()
+        } else if is_climax && last.close > last.open {
+            "WARNING: buying climax. Next 2 candles may pull back DOWN.".into()
+        } else if has_bear_reversal_candle {
+            "WARNING: bearish reversal candle printed. Next 2 candles may go DOWN.".into()
+        } else {
+            "Next 2 candles: bullish continuation likely — no exhaustion signals.".into()
+        }
+    } else {
+        "Next 2 candles: neutral — no clear direction. Wait for a setup.".into()
+    };
+    evidence.push(Evidence { source: "ahead".into(), finding: next_2_prediction.clone(), confirms: "neutral".into(), weight: Decimal::ZERO });
 
     let market_state = determine_market_state(&ind);
 
@@ -504,27 +776,57 @@ pub async fn analyze(
         _ => (entry - sl_dist, entry + tp_dist),
     };
 
-    // ═══ ENTRY CHECKLIST — like a pilot's pre-flight ═══
+    // --- Trigger gate ---
+    let prev_c = candles.len().ge(&2).then(|| &candles[candles.len() - 2]);
+    let prior_swing_high_tg = candles.iter().rev().skip(1).take(50).map(|c| c.high).fold(Decimal::ZERO, Decimal::max);
+    let prior_swing_low_tg = candles.iter().rev().skip(1).take(50).map(|c| c.low).fold(Decimal::MAX, Decimal::min);
+    let trigger_fired = if direction == "wait" { false } else {
+        let c = last;
+        match direction.as_str() {
+            "buy" => {
+                let broke_prior_high = prev_c.map_or(false, |p| c.close > p.high);
+                let candle_confirms = c.close > c.open; // bullish candle
+                let broke_swing = prior_swing_high_tg > Decimal::ZERO && c.close > prior_swing_high_tg;
+                // Require BOTH a breakout/reversal AND a bullish candle.
+                (broke_prior_high || broke_swing || has_bull_reversal_candle) && candle_confirms
+            }
+            "sell" => {
+                let broke_prior_low = prev_c.map_or(false, |p| c.close < p.low);
+                let candle_confirms = c.close < c.open; // bearish candle
+                let broke_swing = prior_swing_low_tg < Decimal::MAX && c.close < prior_swing_low_tg;
+                (broke_prior_low || broke_swing || has_bear_reversal_candle) && candle_confirms
+            }
+            _ => false,
+        }
+    };
+    let direction = if !trigger_fired && direction != "wait" {
+        evidence.push(Evidence { source: "trigger".into(),
+            finding: format!("TRIGGER GATE: setup valid but trigger not fired. Latest candle hasn't broken prior bar's range. WAIT for the candle to confirm the move."),
+            confirms: "neutral".into(), weight: Decimal::ZERO });
+        "wait".to_string()
+    } else { direction };
+
+    // ═══ ENTRY CHECKLIST ═══
     let session_active = now.hour() >= 7 && now.hour() <= 21;
     let trend_aligned = direction != "wait" && (trend_dir == direction || trend_dir == "neutral");
     let momentum_aligned = direction != "wait" && (momentum_dir == direction || momentum_dir == "neutral");
     let pattern_confirmed = direction != "wait" && (pattern_dir == direction || ind.consecutive_bearish >= 3 || ind.consecutive_bullish >= 3);
     let no_news_risk = news.status != "danger";
     let risk_reward_ok = tp_dist >= sl_dist * Decimal::from(2);
-    let ready = trend_aligned && momentum_aligned && no_news_risk && risk_reward_ok && session_active && direction != "wait";
+    let conviction_ok = direction != "wait" && evidence_score >= conviction_threshold;
+    let ready = trigger_fired && trend_aligned && momentum_aligned && pattern_confirmed
+        && conviction_ok && no_news_risk && risk_reward_ok && direction != "wait";
 
     let mut checklist_details = Vec::new();
     checklist_details.push(format!("1. Trend aligned: {} — price structure and EMA agree with {}", if trend_aligned { "YES" } else { "NO" }, direction));
     checklist_details.push(format!("2. Momentum aligned: {} — RSI/MACD agree with {}", if momentum_aligned { "YES" } else { "NO" }, direction));
     checklist_details.push(format!("3. Pattern confirmed: {} — candlestick pattern or exhaustion present", if pattern_confirmed { "YES" } else { "NO" }));
-    checklist_details.push(format!("4. No news risk: {} — no high-impact news imminent", if no_news_risk { "YES" } else { "NO" }));
-    checklist_details.push(format!("5. Risk/reward: {} — target is 2x the stop distance", if risk_reward_ok { "YES" } else { "NO" }));
-    checklist_details.push(format!("6. Session active: {} — market is within trading hours", if session_active { "YES" } else { "NO" }));
-    if ready {
-        checklist_details.push("ALL CONDITIONS MET — trade is valid.".into());
-    } else {
-        checklist_details.push("NOT ALL CONDITIONS MET — do not trade or reduce risk.".into());
-    }
+    checklist_details.push(format!("4. Conviction: {} — score {:.0}% (bar {:.0}%)", if conviction_ok { "YES" } else { "NO" }, evidence_score * Decimal::from(100), conviction_threshold * Decimal::from(100)));
+    checklist_details.push(format!("5. No news risk: {}", if no_news_risk { "YES" } else { "NO" }));
+    checklist_details.push(format!("6. Risk/reward: {}", if risk_reward_ok { "YES" } else { "NO" }));
+    checklist_details.push(format!("7. Trigger fired: {}", if trigger_fired { "YES" } else { "NO — WAIT" }));
+    if ready { checklist_details.push("ALL CONDITIONS MET — trade is valid.".into()); }
+    else { checklist_details.push("NOT ALL CONDITIONS MET — do not trade or reduce risk.".into()); }
 
     // What to watch.
     let mut what_to_watch: Vec<String> = Vec::new();
@@ -533,22 +835,127 @@ pub async fn analyze(
     what_to_watch.push(format!("Support: {} | Resistance: {}", ind.swing_low, ind.swing_high));
     if news.status != "clear" { what_to_watch.push(format!("NEWS: {}", news.summary)); }
     let last_ts = candles.last().unwrap().ts;
-    what_to_watch.push(format!("Next candle in {} — watch the open.", format_countdown((last_ts + Duration::seconds(tf_secs as i64) - now).num_seconds().max(0))));
-
-    // Timing.
-    let next_candle_start = last_ts + Duration::seconds(tf_secs as i64);
-    let secs_remaining = (next_candle_start - now).num_seconds().max(0);
+    let real_tf_secs: i64 = if candles.len() >= 2 {
+        let prev_ts = candles[candles.len() - 2].ts;
+        let gap = (last_ts - prev_ts).num_seconds().abs();
+        if gap > 0 { gap } else { tf_secs as i64 }
+    } else { tf_secs as i64 };
+    let elapsed_in_slot = now.timestamp() % real_tf_secs;
+    let secs_remaining = (real_tf_secs - elapsed_in_slot) % real_tf_secs;
+    let next_candle_start = now + Duration::seconds(secs_remaining);
     let countdown = format_countdown(secs_remaining);
+    what_to_watch.push(format!("Next candle in {} — watch the open.", countdown));
+
     let session = market_session(&now);
-    let expiry = now + Duration::seconds(tf_secs as i64);
+    let expiry = now + Duration::seconds(real_tf_secs);
+    let tf_secs = real_tf_secs as u32;
+
+    // Move duration estimate.
+    let avg_dir_body: Decimal = candles.iter().rev().take(20)
+        .map(|c| (c.close - c.open).abs())
+        .fold(Decimal::ZERO, |a, b| a + b) / Decimal::from(20.min(candles.len() as u32));
+    let move_distance = tp_dist;
+    let mut move_candles = if avg_dir_body > Decimal::ZERO {
+        (move_distance / avg_dir_body).round().to_string().parse::<i64>().unwrap_or(3)
+    } else { 3 };
+    if ind.adx > Decimal::from(25) { move_candles = (move_candles + 1).max(3); }
+    let max_candles = if symbol.starts_with("frx") || symbol.contains("/") { 6 } else { 3 };
+    let move_candles = move_candles.clamp(1, max_candles) as u32;
+    let move_secs = move_candles as i64 * real_tf_secs;
+    let move_duration_label = format_countdown(move_secs);
 
     // Build report.
     let reasoning = build_report(&market_state, &direction, &evidence_score, &session,
-        &evidence, &ind, note_count, symbol, req.timeframe_minutes, &recent, &upper_context, &what_to_watch, &checklist_details);
+        &evidence, &ind, note_count, symbol, req.timeframe_minutes, &recent, &upper_context, &what_to_watch, &checklist_details, move_candles, &move_duration_label);
 
     let final_reasoning = if let Ok(insight) = llm_enhance(llm, symbol, &direction, &evidence_score, &evidence, &ind).await {
         format!("{}\n\nAI Insight: {}", reasoning, insight)
     } else { reasoning };
+
+    let fired_sources: Vec<String> = evidence.iter()
+        .filter(|e| e.weight > Decimal::ZERO && e.confirms == direction)
+        .map(|e| e.source.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    // Predict next candle.
+    let (next_candle_prediction, next_candle_reasoning) = predict_next_candle(&ind, &direction);
+    let active_pattern = active_candlestick_pattern(&ind);
+    let active_chart_pattern = active_chart_pattern(&ind);
+    let (rec_tf, rec_duration, rec_reason) = recommend_timeframe(symbol);
+
+    // Build trade options (non-contradictory).
+    let total_evidence = bull + bear;
+    let bull_pct = if total_evidence > Decimal::ZERO { bull / total_evidence } else { Decimal::ZERO };
+    let bear_pct = if total_evidence > Decimal::ZERO { bear / total_evidence } else { Decimal::ZERO };
+    let bearish_dominant = bear > bull;
+    let bullish_dominant = bull > bear;
+    let sl_dist_val = sl_dist;
+    let tp_dist_val = tp_dist;
+    let mut trade_options: Vec<TradeOption> = Vec::new();
+
+    if bullish_dominant {
+        // BUY + REVERSAL DOWN
+        let mut support: Vec<String> = Vec::new();
+        if ind.price > *ind.ema.get(&200).unwrap_or(&ind.price) { support.push("Price above EMA200".into()); }
+        if ind.price > *ind.ema.get(&50).unwrap_or(&ind.price) { support.push("Price above EMA50".into()); }
+        if let Some(macd) = ind.macd { if macd > Decimal::ZERO { support.push("MACD positive".into()); } }
+        for p in ["bullish_engulfing", "hammer", "morning_star", "three_white_soldiers"] {
+            if ind.patterns.get(p).copied().unwrap_or(Decimal::ZERO) == Decimal::ONE { support.push(format!("{}", p)); }
+        }
+        if ind.patterns.get("resistance_breakout").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE { support.push("resistance breakout".into()); }
+        if ind.patterns.get("uptrend_structure").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE { support.push("higher highs + higher lows".into()); }
+        trade_options.push(TradeOption {
+            option_type: "buy".into(), label: "BUY — Trend Continuation Up".into(),
+            conviction: bull_pct.round_dp(4), entry: entry.round_dp(6), stop_loss: (entry - sl_dist_val).round_dp(6), take_profit: (entry + tp_dist_val).round_dp(6),
+            reasoning: format!("Bullish evidence: {}%. Supports: {}.", bull_pct * Decimal::from(100), if support.is_empty() { "none".into() } else { support.join(", ") }),
+            supporting_evidence: support, recommended: direction == "buy", risk_reward: "1:2".into(),
+        });
+        let mut rsupport: Vec<String> = Vec::new();
+        if has_bear_reversal_candle { rsupport.push("bearish reversal candlestick".into()); }
+        if at_real_resistance { rsupport.push(format!("at resistance ({})", prior_swing_high.round_dp(5))); }
+        if ind.rsi_divergence == "bearish" { rsupport.push("RSI bearish divergence".into()); }
+        if rsi_val > Decimal::from(65) { rsupport.push(format!("RSI overbought ({})", rsi_val.round_dp(1))); }
+        if ind.patterns.get("double_top").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE { rsupport.push("double top".into()); }
+        let rconv = if bear_reversal_count >= 2 && has_bear_reversal_candle { Decimal::from(bear_reversal_count) / Decimal::from(7) } else { Decimal::ZERO };
+        trade_options.push(TradeOption {
+            option_type: "reversal_down".into(), label: "REVERSAL DOWN — Rejection from Resistance (counter-trend)".into(),
+            conviction: rconv.round_dp(4), entry: entry.round_dp(6), stop_loss: (entry + sl_dist_val).round_dp(6), take_profit: (entry - tp_dist_val).round_dp(6),
+            reasoning: format!("Bearish reversal: {} signals. Supports: {}.", bear_reversal_count, if rsupport.is_empty() { "none".into() } else { rsupport.join(", ") }),
+            supporting_evidence: rsupport, recommended: direction == "sell" && has_bear_reversal_candle && bear_reversal_count >= 2, risk_reward: "1:2".into(),
+        });
+    } else if bearish_dominant {
+        // SELL + REVERSAL UP
+        let mut support: Vec<String> = Vec::new();
+        if ind.price < *ind.ema.get(&200).unwrap_or(&ind.price) { support.push("Price below EMA200".into()); }
+        if ind.price < *ind.ema.get(&50).unwrap_or(&ind.price) { support.push("Price below EMA50".into()); }
+        if let Some(macd) = ind.macd { if macd < Decimal::ZERO { support.push("MACD negative".into()); } }
+        for p in ["bearish_engulfing", "shooting_star", "evening_star", "three_black_crows"] {
+            if ind.patterns.get(p).copied().unwrap_or(Decimal::ZERO) == Decimal::ONE { support.push(format!("{}", p)); }
+        }
+        if ind.patterns.get("support_breakdown").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE { support.push("support breakdown".into()); }
+        if ind.patterns.get("downtrend_structure").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE { support.push("lower highs + lower lows".into()); }
+        trade_options.push(TradeOption {
+            option_type: "sell".into(), label: "SELL — Trend Continuation Down".into(),
+            conviction: bear_pct.round_dp(4), entry: entry.round_dp(6), stop_loss: (entry + sl_dist_val).round_dp(6), take_profit: (entry - tp_dist_val).round_dp(6),
+            reasoning: format!("Bearish evidence: {}%. Supports: {}.", bear_pct * Decimal::from(100), if support.is_empty() { "none".into() } else { support.join(", ") }),
+            supporting_evidence: support, recommended: direction == "sell", risk_reward: "1:2".into(),
+        });
+        let mut rsupport: Vec<String> = Vec::new();
+        if has_bull_reversal_candle { rsupport.push("bullish reversal candlestick".into()); }
+        if at_real_support { rsupport.push(format!("at support ({})", prior_swing_low.round_dp(5))); }
+        if ind.rsi_divergence == "bullish" { rsupport.push("RSI bullish divergence".into()); }
+        if rsi_val < Decimal::from(35) { rsupport.push(format!("RSI oversold ({})", rsi_val.round_dp(1))); }
+        if ind.patterns.get("double_bottom").copied().unwrap_or(Decimal::ZERO) == Decimal::ONE { rsupport.push("double bottom".into()); }
+        let rconv = if bull_reversal_count >= 2 && has_bull_reversal_candle { Decimal::from(bull_reversal_count) / Decimal::from(7) } else { Decimal::ZERO };
+        trade_options.push(TradeOption {
+            option_type: "reversal_up".into(), label: "REVERSAL UP — Bounce from Support (counter-trend)".into(),
+            conviction: rconv.round_dp(4), entry: entry.round_dp(6), stop_loss: (entry - sl_dist_val).round_dp(6), take_profit: (entry + tp_dist_val).round_dp(6),
+            reasoning: format!("Bullish reversal: {} signals. Supports: {}.", bull_reversal_count, if rsupport.is_empty() { "none".into() } else { rsupport.join(", ") }),
+            supporting_evidence: rsupport, recommended: direction == "buy" && has_bull_reversal_candle && bull_reversal_count >= 2, risk_reward: "1:2".into(),
+        });
+    }
 
     Ok(Prediction {
         market_state, direction, evidence_score,
@@ -563,6 +970,16 @@ pub async fn analyze(
             trend_aligned, momentum_aligned, pattern_confirmed, no_news_risk, risk_reward_ok, session_active, ready,
             details: checklist_details,
         },
+        estimated_move_duration: move_duration_label,
+        estimated_move_candles: move_candles,
+        recommended_timeframe_minutes: rec_tf,
+        recommended_trade_duration_minutes: rec_duration,
+        recommendation_reason: rec_reason,
+        next_candle_prediction,
+        next_candle_reasoning,
+        active_pattern,
+        active_chart_pattern,
+        trade_options,
     })
 }
 
@@ -572,8 +989,8 @@ fn determine_market_state(ind: &Indicators) -> String {
     let rsi = ind.rsi.get(&14).copied().unwrap_or(Decimal::from(50));
     let strong = ind.adx > Decimal::from(25);
     if ind.bb_width_pct < Decimal::from(20) { return "squeeze".into(); }
-    if rsi < Decimal::from(30) && !above_ema50 { return "reversing_up".into(); }
-    if rsi > Decimal::from(70) && above_ema50 { return "reversing_down".into(); }
+    if rsi < Decimal::from(30) && !above_ema50 && ind.rsi_divergence == "bullish" { return "reversing_up".into(); }
+    if rsi > Decimal::from(70) && above_ema50 && ind.rsi_divergence == "bearish" { return "reversing_down".into(); }
     if above_ema50 && above_ema200 && strong { return "trending_up".into(); }
     if !above_ema50 && !above_ema200 && strong { return "trending_down".into(); }
     if !strong { return "ranging".into(); }
@@ -613,8 +1030,9 @@ fn pattern_meaning(name: &str) -> &'static str {
 
 fn build_report(
     market_state: &str, direction: &str, evidence_score: &Decimal, session: &str,
-    evidence: &[Evidence], ind: &Indicators, note_count: u32, symbol: &str, tf_mins: u32,
-    recent: &[CandleSummary], upper: &[UpperTFContext], what_to_watch: &[String], checklist: &[String],
+    evidence: &[Evidence], ind: &Indicators, _note_count: u32, symbol: &str, tf_mins: u32,
+    _recent: &[CandleSummary], _upper: &[UpperTFContext], what_to_watch: &[String], checklist: &[String],
+    move_candles: u32, move_duration_label: &str,
 ) -> String {
     let pct = evidence_score * Decimal::from(100);
     let bull_e = evidence.iter().filter(|e| e.confirms == "buy" && e.weight > Decimal::ZERO).count();
@@ -642,6 +1060,22 @@ fn build_report(
         if direction == "buy" { ind.price - ind.atr.get(&14).copied().unwrap_or(Decimal::ZERO) } else { ind.price + ind.atr.get(&14).copied().unwrap_or(Decimal::ZERO) },
         if direction == "buy" { ind.price + ind.atr.get(&14).copied().unwrap_or(Decimal::ZERO) * Decimal::from(2) } else { ind.price - ind.atr.get(&14).copied().unwrap_or(Decimal::ZERO) * Decimal::from(2) }));
 
+    // Forward forecast.
+    let atr14 = ind.atr.get(&14).copied().unwrap_or(Decimal::ZERO);
+    let (forecast_dir, why, magnitude) = if direction == "wait" {
+        ("FLAT / RANGE", "Insufficient conviction — mixed evidence. Expect chop until a breakout trigger fires.".to_string(), atr14.clone())
+    } else {
+        let dir_word = if direction == "buy" { "UP" } else { "DOWN" };
+        let target = if direction == "buy" { ind.swing_high } else { ind.swing_low };
+        (dir_word, format!("Bias {} with {:.0}% conviction. Momentum + structure align — expect continuation {} toward {}.", dir_word, pct, if direction == "buy" { "up" } else { "down" }, target), (target - ind.price).abs())
+    };
+
+    r.push_str("\n============================================\n  FORWARD FORECAST (next move)\n============================================\n");
+    r.push_str(&format!("Direction: {}\n", forecast_dir));
+    r.push_str(&format!("Expected magnitude: ~{} ({} ATR)\n", magnitude.round_dp(5),
+        if atr14 != Decimal::ZERO { (magnitude / atr14).round_dp(2).to_string() } else { "?".into() }));
+    r.push_str(&format!("Rationale: {}\n", why));
+    r.push_str(&format!("Horizon: ~{} candles (≈{})\n", move_candles, move_duration_label));
     r
 }
 
@@ -663,12 +1097,21 @@ fn pattern_sentiment(name: &str) -> (i32, Decimal) {
 }
 
 async fn llm_enhance(llm: &LlmClient, symbol: &str, direction: &str, score: &Decimal, evidence: &[Evidence], ind: &Indicators) -> AppResult<String> {
-    let system = "You are a market analyst. In 2-3 sentences, state ONLY what the evidence shows. No predictions. No opinions. Just connect the facts.";
-    let user = format!("Symbol: {}\nBias: {}\nScore: {}%\nADX: {} RSI: {} Stoch: {}\n\nFacts:\n{}\n\nWhat does this evidence show?",
+    let system = "You are a forward-looking market forecaster. Based ONLY on the verified evidence provided, predict what the chart is MOST LIKELY to do next over the upcoming candle(s). State a clear directional forecast (UP, DOWN, or FLAT), the specific trigger that would confirm or invalidate your forecast, and the time horizon. Be decisive. Answer in JSON with keys: forecast, rationale, trigger_confirm, trigger_invalidate, horizon.";
+    let user = format!("Symbol: {}\nCurrent bias: {}\nConviction: {}%\nADX: {} RSI: {} Stoch: {}\n\nVerified facts:\n{}\n\nBased on this evidence, forecast where the graph is going NEXT. What is the most probable next move and why? What event confirms it? What invalidates it?",
         symbol, direction, score * Decimal::from(100), ind.adx,
         ind.rsi.get(&14).map(|d| d.to_string()).unwrap_or_default(), ind.stoch_k,
         evidence.iter().filter(|e| e.weight > Decimal::ZERO).take(10).map(|e| format!("[{}] {}", e.source, e.finding)).collect::<Vec<_>>().join("\n"));
     llm.extract_json(system, &user).await
-        .ok().and_then(|v| v.get("insight").and_then(|i| i.as_str()).map(|s| s.to_string()))
+        .ok().and_then(|v| {
+            let forecast = v.get("forecast").and_then(|i| i.as_str()).unwrap_or("");
+            let rationale = v.get("rationale").and_then(|i| i.as_str()).unwrap_or("");
+            let confirm = v.get("trigger_confirm").and_then(|i| i.as_str()).unwrap_or("");
+            let invalidate = v.get("trigger_invalidate").and_then(|i| i.as_str()).unwrap_or("");
+            let horizon = v.get("horizon").and_then(|i| i.as_str()).unwrap_or("");
+            if forecast.is_empty() && rationale.is_empty() { return None; }
+            Some(format!("FORECAST: {}\nWhy: {}\nConfirms if: {}\nInvalidates if: {}\nHorizon: {}",
+                forecast.to_uppercase(), rationale, confirm, invalidate, horizon))
+        })
         .ok_or_else(|| AppError::Llm("LLM not available".into()))
 }
